@@ -1362,11 +1362,13 @@ function marketingCardHtml(m){
   const projCount = projectsIndex.filter(p=>p.marketingId===m.id).length;
   return `
         <div class="v-card">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
             <img src="${photo}" alt="${escapeHtml(m.name)}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid var(--gold);flex-shrink:0;"/>
-            <div style="font-family:'Fraunces',serif;font-weight:700;font-size:17px;line-height:1.25;">${escapeHtml(m.name)}</div>
+            <div>
+              <div style="font-family:'Fraunces',serif;font-weight:700;font-size:17px;line-height:1.3;">${escapeHtml(m.name)}</div>
+              <div style="font-size:12.5px;color:var(--cream-dim);">${escapeHtml(m.phone||'-')}</div>
+            </div>
           </div>
-          <div style="font-size:12.5px;color:var(--cream-dim);margin:0 0 10px 62px;">${escapeHtml(m.phone||'-')}</div>
           <div class="v-field"><label>PIN Login</label><div style="font-family:monospace;font-weight:700;">${escapeHtml(m.pin)}</div></div>
           <div class="v-field"><label>Jumlah Klien</label><div>${projCount} project</div></div>
           <div class="row-actions" style="margin-top:10px;">
@@ -1824,29 +1826,26 @@ function render(){
   const projectUrl = baseUrl + '?p=' + state.id;
   const clientLink = projectUrl + '#client';
 
+  const projMkt = state.marketingId ? findMarketingById(state.marketingId) : null;
+  const picPhoto = projMkt ? (projMkt.photoUrl || LOGO_SRC) : PIC_PHOTO_SRC;
+  const picName = projMkt ? projMkt.name : PIC_NAME;
+  const picPhone = projMkt ? (projMkt.phone || '-') : PIC_PHONE_DISPLAY;
+  const picWa = projMkt ? (projMkt.phone ? ('https://wa.me/62' + projMkt.phone.replace(/^0/, '')) : '#') : PIC_WA;
+  const picRoleLabel = projMkt ? 'Marketing' : 'PIC WO';
+
   app.innerHTML = `
     <div class="topbar">
       <div class="brand"><img src="${LOGO_SRC}" alt="ArtaJava Wedding Organizer"/></div>
       <div class="topbar-right">
-        ${(()=>{
-          const projMkt = state.marketingId ? findMarketingById(state.marketingId) : null;
-          const picPhoto = projMkt ? (projMkt.photoUrl || LOGO_SRC) : PIC_PHOTO_SRC;
-          const picName = projMkt ? projMkt.name : PIC_NAME;
-          const picPhone = projMkt ? (projMkt.phone || '-') : PIC_PHONE_DISPLAY;
-          const picWa = projMkt ? (projMkt.phone ? ('https://wa.me/62' + projMkt.phone.replace(/^0/, '')) : '#') : PIC_WA;
-          const picRoleLabel = projMkt ? 'Marketing' : 'PIC WO';
-          return `<div class="pic-chip">
+        <div class="pic-chip">
           <img class="pic-avatar" src="${picPhoto}" alt="${escapeHtml(picName)}"/>
           <div class="pic-info">
             <div class="pic-name">${escapeHtml(picName)}</div>
             <div class="pic-role">${picRoleLabel} · <a href="${picWa}" target="_blank" rel="noopener">${escapeHtml(picPhone)}</a></div>
           </div>
-        </div>`;
-        })()}
-        ${isVendor ? `<div class="mode-pill vendor"><span class="pulse"></span>Mode Vendor</div>` : ''}
+        </div>
         ${isVendor ? `<button class="btn tiny ghost" id="backToDashboardBtn">📁 Semua Project</button>` : ''}
         ${(!isAdmin && currentMarketing) ? `<button class="btn tiny ghost" id="changeMyPin">🔑 Ganti PIN Saya</button>` : ''}
-        ${isVendor && roleDecided ? `<button class="btn tiny ghost" id="switchRoleBtn">↺ Ganti Peran</button>` : ''}
         ${!isVendor ? `<button class="btn tiny ghost" id="clientLogoutBtn">Keluar</button>` : ''}
       </div>
     </div>
@@ -1931,7 +1930,7 @@ function render(){
     <section class="panel ${currentTab==='moodboard'?'active':''}">${renderMoodboard()}</section>
 
     <footer>
-      <div class="pic-footer"><img src="${PIC_PHOTO_SRC}" alt="${PIC_NAME}"/><div style="text-align:left;"><div style="font-weight:700;color:var(--cream);">${PIC_NAME} · PIC WO</div><a href="${PIC_WA}" target="_blank" rel="noopener" style="color:var(--gold);text-decoration:none;font-weight:600;">${PIC_PHONE_DISPLAY}</a></div></div>
+      <div class="pic-footer"><img src="${picPhoto}" alt="${escapeHtml(picName)}"/><div style="text-align:left;"><div style="font-weight:700;color:var(--cream);">${escapeHtml(picName)} · ${picRoleLabel}</div><a href="${picWa}" target="_blank" rel="noopener" style="color:var(--gold);text-decoration:none;font-weight:600;">${escapeHtml(picPhone)}</a></div></div>
       Dibuat dengan 💗 oleh ArtaJava Wedding Organizer untuk perjalanan menuju hari bahagia kalian.
     </footer>
   `;
