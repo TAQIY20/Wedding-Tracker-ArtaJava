@@ -257,6 +257,16 @@
   .stage-badge.menunggu_album{background:rgba(92,18,32,.16);color:#5C1220;}
   .stage-badge.final{background:rgba(212,175,55,.35);color:#5C4300;}
 
+  /* Status project ditempel langsung di icon 💍 tiap kartu klien (hanya terlihat admin/marketing) */
+  .emoji-stage-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .emoji-stage-dot{position:absolute;bottom:-3px;right:-4px;width:11px;height:11px;border-radius:50%;border:2px solid var(--bg);box-sizing:border-box;}
+  .emoji-stage-dot.belum_dp{background:#9C8B7A;}
+  .emoji-stage-dot.dp1{background:#8C2438;}
+  .emoji-stage-dot.on_progress{background:#C6A15B;}
+  .emoji-stage-dot.lunas{background:#2E7D50;}
+  .emoji-stage-dot.menunggu_album{background:#5C1220;}
+  .emoji-stage-dot.final{background:#D4AF37;box-shadow:0 0 0 2px rgba(212,175,55,.35);}
+
   .mb-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;}
   @media(max-width:760px){.mb-grid{grid-template-columns:1fr;}}
   .mb-card{background:var(--card);border:1px solid var(--card-border);border-radius:20px;padding:18px 20px;margin-bottom:16px;}
@@ -1341,7 +1351,7 @@ function projectCardHtml(p){
   const stage = computeProjectStage(p);
   return `
         <div class="v-card">
-          <div class="v-cat"><div class="catleft"><span class="emoji">💍</span><span>${escapeHtml(p.brideName)} &amp; ${escapeHtml(p.groomName)}</span></div><span class="stage-badge ${stage.key}">${stage.label}</span></div>
+          <div class="v-cat"><div class="catleft"><span class="emoji-stage-wrap" title="Status: ${stage.label}"><span class="emoji">💍</span><span class="emoji-stage-dot ${stage.key}"></span></span><span>${escapeHtml(p.brideName)} &amp; ${escapeHtml(p.groomName)}</span></div><span class="stage-badge ${stage.key}">${stage.label}</span></div>
           <div class="v-field"><label>Tanggal Nikah</label><div>${fmtDate(p.weddingDate)}</div></div>
           <div class="v-field"><label>Kode Project</label><div style="font-family:monospace;font-weight:700;">${escapeHtml(p.id)}</div></div>
           ${marketingBadge}
