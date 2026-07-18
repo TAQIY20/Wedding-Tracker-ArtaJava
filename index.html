@@ -449,10 +449,8 @@ async function loadCustomVendorCats(){
   }catch(e){ /* ignore, pakai kategori bawaan saja */ }
 }
 async function saveCustomVendorCats(){
-  try{
-    const extra = VENDOR_CATS.filter(c=> !BUILTIN_VENDOR_CAT_KEYS.has(c.key)).map(c=>({key:c.key, emoji:c.emoji}));
-    await window.storage.set(CUSTOM_VENDOR_CATS_KEY, JSON.stringify(extra), true);
-  }catch(e){ console.error('save custom vendor cats failed', e); }
+  const extra = VENDOR_CATS.filter(c=> !BUILTIN_VENDOR_CAT_KEYS.has(c.key)).map(c=>({key:c.key, emoji:c.emoji}));
+  return await storageSetWithRetry(CUSTOM_VENDOR_CATS_KEY, JSON.stringify(extra), true);
 }
 
 function defaultTimeline(weddingDate){
@@ -634,7 +632,7 @@ async function loadMasterSettings(){
   }catch(e){ masterSettings = { vendorPin: '1234' }; }
 }
 async function saveMasterSettings(){
-  try{ await window.storage.set(MASTER_SETTINGS_KEY, JSON.stringify(masterSettings), true); }catch(e){ console.error('save master failed', e); }
+  return await storageSetWithRetry(MASTER_SETTINGS_KEY, JSON.stringify(masterSettings), true);
 }
 
 /* ---------- MARKETING ACCOUNTS (admin-managed, shared across all projects) ---------- */
@@ -645,7 +643,16 @@ async function loadMarketingList(){
   }catch(e){ marketingList = []; }
 }
 async function saveMarketingList(){
-  try{ await window.storage.set(MARKETING_LIST_KEY, JSON.stringify(marketingList), true); }catch(e){ console.error('save marketing list failed', e); }
+  const ok = await storageSetWithRetry(MARKETING_LIST_KEY, JSON.stringify(marketingList), true);
+  if(!ok) return false;
+  // Verifikasi: baca ulang dari storage untuk pastikan data yang tersimpan benar-benar yang terbaru,
+  // bukan versi lama karena delay/replikasi di sisi storage.
+  try{
+    const res = await window.storage.get(MARKETING_LIST_KEY, true);
+    const saved = (res && res.value) ? JSON.parse(res.value) : [];
+    if(JSON.stringify(saved) !== JSON.stringify(marketingList)) return false;
+  }catch(e){ return false; }
+  return true;
 }
 function findMarketingByPin(pin){
   return marketingList.find(m => m.pin === pin) || null;
@@ -668,7 +675,7 @@ async function loadPackageList(){
   });
 }
 async function savePackageList(){
-  try{ await window.storage.set(PACKAGE_LIST_KEY, JSON.stringify(packageList), true); }catch(e){ console.error('save package list failed', e); }
+  return await storageSetWithRetry(PACKAGE_LIST_KEY, JSON.stringify(packageList), true);
 }
 function findPackageById(id){
   return packageList.find(pk => pk.id === id) || null;
@@ -1249,7 +1256,13 @@ function renderProjectDashboard(){
   if(isAdmin){
     document.getElementById('changeMasterPin').addEventListener('click', async ()=>{
       const val = await customPrompt('PIN Admin baru:', masterSettings.vendorPin);
-      if(val && val.trim()){ masterSettings.vendorPin = val.trim(); await saveMasterSettings(); showToast('PIN admin diperbarui ✓'); }
+      if(val && val.trim()){
+        const oldPin = masterSettings.vendorPin;
+        masterSettings.vendorPin = val.trim();
+        const ok = await saveMasterSettings();
+        if(ok) showToast('PIN admin diperbarui ✓');
+        else { masterSettings.vendorPin = oldPin; await customAlert('Gagal menyimpan PIN baru ke storage — cek koneksi internet dan coba lagi.'); }
+      }
     });
     document.getElementById('newMarketingBtn').addEventListener('click', ()=> showMarketingForm());
     document.getElementById('newPackageBtn').addEventListener('click', ()=> showPackageForm());
@@ -1340,13 +1353,26 @@ function showMarketingForm(editId){
     const phone = document.getElementById('mktPhone').value.trim();
     const pin = document.getElementById('mktPin').value.trim();
     if(!name || !pin){ await customAlert('Nama dan PIN wajib diisi.'); return; }
-    if(marketingList.some(m => m.pin===pin && m.id!==(editing?editing.id:null))){ await customAlert('PIN ini sudah dipakai marketing lain, pakai PIN lain.'); return; }
-    if(editing){
-      editing.name = name; editing.phone = phone; editing.pin = pin; editing.photoUrl = photoDraft;
+    // Selalu cek daftar marketing paling baru dulu, biar gak bentrok PIN dengan perubahan dari sesi lain.
+    await loadMarketingList();
+    const stillEditing = editing ? findMarketingById(editing.id) : null;
+    if(marketingList.some(m => m.pin===pin && m.id!==(stillEditing?stillEditing.id:null))){ await customAlert('PIN ini sudah dipakai marketing lain, pakai PIN lain.'); return; }
+    const btn = document.getElementById('saveMktBtn');
+    btn.disabled = true; btn.textContent = 'Menyimpan...';
+    if(stillEditing){
+      stillEditing.name = name; stillEditing.phone = phone; stillEditing.pin = pin; stillEditing.photoUrl = photoDraft;
+    } else if(editing){
+      // Data lama sudah tidak ada (mungkin terhapus di sesi lain), simpan sebagai akun baru dengan id yang sama.
+      marketingList.push({ id: editing.id, name, phone, pin, photoUrl: photoDraft });
     } else {
       marketingList.push({ id: uid('mkt'), name, phone, pin, photoUrl: photoDraft });
     }
-    await saveMarketingList();
+    const ok = await saveMarketingList();
+    if(!ok){
+      btn.disabled = false; btn.textContent = 'Simpan';
+      await customAlert('Gagal menyimpan ke storage — cek koneksi internet dan coba lagi. PIN belum berubah.');
+      return;
+    }
     showToast('Data marketing tersimpan ✓');
     renderProjectDashboard();
   });
