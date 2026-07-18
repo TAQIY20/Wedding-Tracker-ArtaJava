@@ -635,6 +635,51 @@ async function saveMasterSettings(){
   return await storageSetWithRetry(MASTER_SETTINGS_KEY, JSON.stringify(masterSettings), true);
 }
 
+/* Kompres gambar di browser (resize + turunkan kualitas JPEG) sampai hasilnya
+   pasti muat di bawah batas ukuran storage backend (default aman: 40000 karakter,
+   backend membatasi 45000). Ini mencegah error "Value terlalu besar untuk disimpan"
+   yang terjadi kalau foto asli langsung dijadikan base64 tanpa dikompres dulu. */
+function compressImageFile(file, opts){
+  opts = opts || {};
+  const maxChars = opts.maxChars || 40000;
+  const maxDim = opts.maxDim || 480;
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        try{
+          let width = img.width, height = img.height;
+          const scale = Math.min(1, maxDim / Math.max(width, height));
+          width = Math.max(1, Math.round(width*scale));
+          height = Math.max(1, Math.round(height*scale));
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          let quality = 0.85;
+          let dataUrl = '';
+          let attempts = 0;
+          do{
+            canvas.width = width; canvas.height = height;
+            ctx.clearRect(0,0,width,height);
+            ctx.drawImage(img, 0, 0, width, height);
+            dataUrl = canvas.toDataURL('image/jpeg', quality);
+            if(dataUrl.length <= maxChars) break;
+            // Kalau masih kegedean: turunkan kualitas dulu, kalau sudah mentok turunkan dimensi.
+            if(quality > 0.35){ quality -= 0.1; }
+            else { width = Math.max(24, Math.round(width*0.85)); height = Math.max(24, Math.round(height*0.85)); }
+            attempts++;
+          } while(attempts < 18);
+          resolve(dataUrl);
+        }catch(err){ reject(err); }
+      };
+      img.onerror = ()=> reject(new Error('Gagal membaca gambar. Coba format JPG/PNG lain.'));
+      img.src = reader.result;
+    };
+    reader.onerror = ()=> reject(new Error('Gagal membaca file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ---------- MARKETING ACCOUNTS (admin-managed, shared across all projects) ----------
    Catatan penting: foto profil marketing TIDAK disimpan menempel di dalam
    MARKETING_LIST_KEY. Kalau ditempel, daftar berisi banyak marketing (misal 15
@@ -1391,13 +1436,17 @@ function showMarketingForm(editId){
       </div>
     </div>
   `;
-  document.getElementById('mktPhotoInput').addEventListener('change', e=>{
+  document.getElementById('mktPhotoInput').addEventListener('change', async e=>{
     const file = e.target.files && e.target.files[0];
     if(!file) return;
-    if(file.size > 4*1024*1024){ customAlert('Ukuran foto maksimal 4MB.'); e.target.value=''; return; }
-    const reader = new FileReader();
-    reader.onload = ()=>{ photoDraft = reader.result; document.getElementById('mktPhotoPreview').src = photoDraft; };
-    reader.readAsDataURL(file);
+    if(file.size > 4*1024*1024){ await customAlert('Ukuran foto maksimal 4MB.'); e.target.value=''; return; }
+    try{
+      photoDraft = await compressImageFile(file, { maxChars: 40000, maxDim: 480 });
+      document.getElementById('mktPhotoPreview').src = photoDraft;
+    }catch(err){
+      await customAlert('Gagal memproses foto: ' + (err.message || err));
+      e.target.value = '';
+    }
   });
   document.getElementById('cancelMktForm').addEventListener('click', ()=> renderProjectDashboard());
   document.getElementById('saveMktBtn').addEventListener('click', async ()=>{
@@ -2515,12 +2564,27 @@ function attachHandlers(){
       const file = e.target.files && e.target.files[0];
       if(!file) return;
       if(file.size > 4*1024*1024){ await customAlert('Ukuran file maksimal 4MB. Pilih file yang lebih kecil ya.'); e.target.value=''; return; }
-      const reader = new FileReader();
-      reader.onload = ()=>{
-        p.invoice = { name:file.name, dataUrl:reader.result, type:file.type };
+      try{
+        if(file.type && file.type.startsWith('image/')){
+          // Invoice berupa foto: kompres dulu biar tidak kena batas ukuran storage.
+          const dataUrl = await compressImageFile(file, { maxChars: 40000, maxDim: 1000 });
+          p.invoice = { name:file.name, dataUrl, type:'image/jpeg' };
+        } else {
+          // PDF tidak bisa dikompres di browser — kalau file besar, kemungkinan tetap gagal
+          // tersimpan (batas storage per-item ~45000 karakter). Sarankan pakai foto/scan kecil kalau gagal.
+          const reader = new FileReader();
+          const dataUrl = await new Promise((resolve, reject)=>{
+            reader.onload = ()=> resolve(reader.result);
+            reader.onerror = ()=> reject(new Error('Gagal membaca file.'));
+            reader.readAsDataURL(file);
+          });
+          p.invoice = { name:file.name, dataUrl, type:file.type };
+        }
         scheduleSave(); render();
-      };
-      reader.readAsDataURL(file);
+      }catch(err){
+        await customAlert('Gagal memproses file invoice: ' + (err.message || err));
+        e.target.value = '';
+      }
     });
     const delInvoiceBtn = el.querySelector('[data-action="delete-invoice"]');
     if(delInvoiceBtn) delInvoiceBtn.addEventListener('click', async ()=>{ if(await customConfirm('Hapus lampiran invoice ini?')){ p.invoice = null; scheduleSave(); render(); } });
