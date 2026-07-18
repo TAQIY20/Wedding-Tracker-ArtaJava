@@ -1362,11 +1362,11 @@ function marketingCardHtml(m){
   const projCount = projectsIndex.filter(p=>p.marketingId===m.id).length;
   return `
         <div class="v-card">
-          <div class="v-cat"><div class="catleft"><span class="emoji">🧑‍💼</span><span>${escapeHtml(m.name)}</span></div></div>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-            <img src="${photo}" alt="${escapeHtml(m.name)}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid var(--gold);"/>
-            <div style="font-size:12.5px;color:var(--cream-dim);">${escapeHtml(m.phone||'-')}</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+            <img src="${photo}" alt="${escapeHtml(m.name)}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid var(--gold);flex-shrink:0;"/>
+            <div style="font-family:'Fraunces',serif;font-weight:700;font-size:17px;line-height:1.25;">${escapeHtml(m.name)}</div>
           </div>
+          <div style="font-size:12.5px;color:var(--cream-dim);margin:0 0 10px 62px;">${escapeHtml(m.phone||'-')}</div>
           <div class="v-field"><label>PIN Login</label><div style="font-family:monospace;font-weight:700;">${escapeHtml(m.pin)}</div></div>
           <div class="v-field"><label>Jumlah Klien</label><div>${projCount} project</div></div>
           <div class="row-actions" style="margin-top:10px;">
@@ -1828,13 +1828,21 @@ function render(){
     <div class="topbar">
       <div class="brand"><img src="${LOGO_SRC}" alt="ArtaJava Wedding Organizer"/></div>
       <div class="topbar-right">
-        <div class="pic-chip">
-          <img class="pic-avatar" src="${PIC_PHOTO_SRC}" alt="${PIC_NAME}"/>
+        ${(()=>{
+          const projMkt = state.marketingId ? findMarketingById(state.marketingId) : null;
+          const picPhoto = projMkt ? (projMkt.photoUrl || LOGO_SRC) : PIC_PHOTO_SRC;
+          const picName = projMkt ? projMkt.name : PIC_NAME;
+          const picPhone = projMkt ? (projMkt.phone || '-') : PIC_PHONE_DISPLAY;
+          const picWa = projMkt ? (projMkt.phone ? ('https://wa.me/62' + projMkt.phone.replace(/^0/, '')) : '#') : PIC_WA;
+          const picRoleLabel = projMkt ? 'Marketing' : 'PIC WO';
+          return `<div class="pic-chip">
+          <img class="pic-avatar" src="${picPhoto}" alt="${escapeHtml(picName)}"/>
           <div class="pic-info">
-            <div class="pic-name">${PIC_NAME}</div>
-            <div class="pic-role">PIC WO · <a href="${PIC_WA}" target="_blank" rel="noopener">${PIC_PHONE_DISPLAY}</a></div>
+            <div class="pic-name">${escapeHtml(picName)}</div>
+            <div class="pic-role">${picRoleLabel} · <a href="${picWa}" target="_blank" rel="noopener">${escapeHtml(picPhone)}</a></div>
           </div>
-        </div>
+        </div>`;
+        })()}
         ${isVendor ? `<div class="mode-pill vendor"><span class="pulse"></span>Mode Vendor</div>` : ''}
         ${isVendor ? `<button class="btn tiny ghost" id="backToDashboardBtn">📁 Semua Project</button>` : ''}
         ${(!isAdmin && currentMarketing) ? `<button class="btn tiny ghost" id="changeMyPin">🔑 Ganti PIN Saya</button>` : ''}
