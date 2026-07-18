@@ -249,6 +249,14 @@
   .p-status.unpaid{background:rgba(140,31,46,.22);color:#8C2438;}
   .p-status.paid{background:rgba(212,175,55,.24);color:#7A5B12;}
 
+  .stage-badge{font-size:11px;padding:5px 12px;border-radius:100px;font-weight:700;white-space:nowrap;border:1px solid transparent;}
+  .stage-badge.belum_dp{background:rgba(122,31,46,.10);color:var(--cream-dim);}
+  .stage-badge.dp1{background:rgba(140,31,46,.16);color:#8C2438;}
+  .stage-badge.on_progress{background:rgba(198,161,91,.28);color:#7A5B12;}
+  .stage-badge.lunas{background:rgba(46,125,80,.20);color:#1F6B44;}
+  .stage-badge.menunggu_album{background:rgba(92,18,32,.16);color:#5C1220;}
+  .stage-badge.final{background:rgba(212,175,55,.35);color:#5C4300;}
+
   .mb-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;}
   @media(max-width:760px){.mb-grid{grid-template-columns:1fr;}}
   .mb-card{background:var(--card);border:1px solid var(--card-border);border-radius:20px;padding:18px 20px;margin-bottom:16px;}
@@ -464,6 +472,47 @@ const BUILTIN_VENDOR_CAT_KEYS = new Set(VENDOR_CATS.map(c=>c.key));
 
 function uid(p){ return (p||'id')+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
 function todayISO(){ return new Date().toISOString().slice(0,10); }
+
+/* ---------- STATUS PROJECT (otomatis, hanya terlihat oleh admin & marketing) ----------
+   Dihitung dari status pembayaran (DP1 / DP20 / Pelunasan), tanggal hari H, dan progres agenda.
+   Ringkasan (dp1Paid/dp20Paid/pelunasanPaid/allAgendaDone) disimpan di projectsIndex tiap kali
+   project disimpan, supaya dashboard tidak perlu memuat data lengkap tiap project satu-satu. */
+function computePaymentFlags(payments){
+  const list = Array.isArray(payments) ? payments : [];
+  const findPay = kw => list.find(p => (p.label||'').toLowerCase().includes(kw));
+  const dp1 = findPay('dp 1');
+  const dp20 = findPay('dp 20');
+  const pelunasan = findPay('pelunasan');
+  const totalPaid = list.filter(p=>p.status==='paid').reduce((s,p)=>s+(Number(p.amount)||0),0);
+  const totalTagihan = list.reduce((s,p)=>s+(Number(p.amount)||0),0);
+  return {
+    dp1Paid: !!(dp1 && dp1.status==='paid'),
+    dp20Paid: !!(dp20 && dp20.status==='paid'),
+    pelunasanPaid: !!(pelunasan && pelunasan.status==='paid') || (totalTagihan>0 && totalPaid>=totalTagihan),
+  };
+}
+function computeAllAgendaDone(timeline){
+  const list = Array.isArray(timeline) ? timeline : [];
+  return list.length>0 && list.every(t=>t.status==='done');
+}
+const STAGE_LABELS = {
+  belum_dp: 'Belum DP',
+  dp1: 'Sudah DP 1jt',
+  on_progress: 'On Progress',
+  lunas: 'Lunas',
+  menunggu_album: 'Menunggu Album',
+  final: 'Final',
+};
+function computeProjectStage(entry){
+  entry = entry || {};
+  if(entry.allAgendaDone) return {key:'final', label:STAGE_LABELS.final};
+  if(entry.weddingDate && todayISO() > entry.weddingDate) return {key:'menunggu_album', label:STAGE_LABELS.menunggu_album};
+  if(entry.pelunasanPaid) return {key:'lunas', label:STAGE_LABELS.lunas};
+  if(entry.dp20Paid) return {key:'on_progress', label:STAGE_LABELS.on_progress};
+  if(entry.dp1Paid) return {key:'dp1', label:STAGE_LABELS.dp1};
+  return {key:'belum_dp', label:STAGE_LABELS.belum_dp};
+}
+
 
 /* ---------- KATEGORI VENDOR TAMBAHAN (admin-managed, shared, muncul di semua paket) ---------- */
 async function loadCustomVendorCats(){
@@ -811,7 +860,7 @@ async function migrateLegacyProject(){
     data.id = genProjectId();
     if(!data.clientPassword) data.clientPassword = genPassword(6);
     await window.storage.set(projectKey(data.id), JSON.stringify(data), true);
-    projectsIndex.push({ id: data.id, brideName: data.couple.brideName, groomName: data.couple.groomName, weddingDate: data.couple.weddingDate, createdAt: data.createdAt || new Date().toISOString() });
+    projectsIndex.push({ id: data.id, brideName: data.couple.brideName, groomName: data.couple.groomName, weddingDate: data.couple.weddingDate, createdAt: data.createdAt || new Date().toISOString(), ...computePaymentFlags(data.payments), allAgendaDone: computeAllAgendaDone(data.timeline) });
     await saveProjectsIndex();
   }catch(e){ /* no legacy data, ignore */ }
 }
@@ -831,7 +880,7 @@ async function createProject(brideName, groomName, marketingId, packageId){
   const pkg = packageId ? findPackageById(packageId) : null;
   const data = defaultData(brideName, groomName, null, marketingId || null, pkg);
   await window.storage.set(projectKey(data.id), JSON.stringify(data), true);
-  projectsIndex.push({ id: data.id, brideName: data.couple.brideName, groomName: data.couple.groomName, weddingDate: data.couple.weddingDate, createdAt: data.createdAt, marketingId: data.marketingId || null });
+  projectsIndex.push({ id: data.id, brideName: data.couple.brideName, groomName: data.couple.groomName, weddingDate: data.couple.weddingDate, createdAt: data.createdAt, marketingId: data.marketingId || null, ...computePaymentFlags(data.payments), allAgendaDone: computeAllAgendaDone(data.timeline) });
   await saveProjectsIndex();
   return data.id;
 }
@@ -896,6 +945,8 @@ async function persist(){
       idxEntry.brideName = state.couple.brideName;
       idxEntry.groomName = state.couple.groomName;
       idxEntry.weddingDate = state.couple.weddingDate;
+      Object.assign(idxEntry, computePaymentFlags(state.payments));
+      idxEntry.allAgendaDone = computeAllAgendaDone(state.timeline);
       saveProjectsIndex();
     }
   } else {
@@ -1287,9 +1338,10 @@ function projectCardHtml(p){
         </select>
       </div>`
     : (m ? `<div class="v-field"><label>Marketing</label><div>${escapeHtml(m.name)}</div></div>` : '');
+  const stage = computeProjectStage(p);
   return `
         <div class="v-card">
-          <div class="v-cat"><div class="catleft"><span class="emoji">💍</span><span>${escapeHtml(p.brideName)} &amp; ${escapeHtml(p.groomName)}</span></div></div>
+          <div class="v-cat"><div class="catleft"><span class="emoji">💍</span><span>${escapeHtml(p.brideName)} &amp; ${escapeHtml(p.groomName)}</span></div><span class="stage-badge ${stage.key}">${stage.label}</span></div>
           <div class="v-field"><label>Tanggal Nikah</label><div>${fmtDate(p.weddingDate)}</div></div>
           <div class="v-field"><label>Kode Project</label><div style="font-family:monospace;font-weight:700;">${escapeHtml(p.id)}</div></div>
           ${marketingBadge}
@@ -1369,9 +1421,12 @@ function renderProjectDashboard(){
   const copyMarketingLinkBtn = document.getElementById('copyMarketingLink');
   if(copyMarketingLinkBtn) copyMarketingLinkBtn.addEventListener('click', ()=> copyText(document.getElementById('marketingLinkBox').value));
   document.getElementById('logoutRoleBtn').addEventListener('click', ()=>{
+    // Kalau tadi masuk lewat link khusus marketing (#marketing), pertahankan hash itu
+    // supaya setelah keluar, opsi "Saya Admin" tetap tidak ditampilkan.
+    const keepHash = location.hash === '#marketing' ? '#marketing' : '';
     isVendor=false; isAdmin=false; vendorAuthed=false; currentMarketing=null; viewingDashboard=false; roleDecided=false;
     currentProjectId = null; state = null;
-    history.replaceState(null, '', location.pathname);
+    history.replaceState(null, '', location.pathname + keepHash);
     showEntryGate();
   });
   if(isAdmin){
