@@ -257,15 +257,17 @@
   .stage-badge.menunggu_album{background:rgba(92,18,32,.16);color:#5C1220;}
   .stage-badge.final{background:rgba(212,175,55,.35);color:#5C4300;}
 
-  /* Status project ditempel langsung di icon 💍 tiap kartu klien (hanya terlihat admin/marketing) */
-  .emoji-stage-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
-  .emoji-stage-dot{position:absolute;bottom:-3px;right:-4px;width:11px;height:11px;border-radius:50%;border:2px solid var(--bg);box-sizing:border-box;}
-  .emoji-stage-dot.belum_dp{background:#9C8B7A;}
-  .emoji-stage-dot.dp1{background:#8C2438;}
-  .emoji-stage-dot.on_progress{background:#C6A15B;}
-  .emoji-stage-dot.lunas{background:#2E7D50;}
-  .emoji-stage-dot.menunggu_album{background:#5C1220;}
-  .emoji-stage-dot.final{background:#D4AF37;box-shadow:0 0 0 2px rgba(212,175,55,.35);}
+  /* Status project ditampilkan terpisah di pojok kanan atas tiap kartu klien (hanya terlihat admin/marketing),
+     TIDAK lagi ditempel ke icon 💍 supaya jelas kelihatan sebagai indikator status tersendiri. */
+  .card-status-badge{position:absolute;top:14px;right:16px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:4px 10px 4px 8px;border-radius:100px;background:rgba(122,31,46,.08);border:1px solid var(--card-border);color:var(--cream-dim);white-space:nowrap;}
+  .card-status-badge .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+  .card-status-badge .dot.belum_dp{background:#9C8B7A;}
+  .card-status-badge .dot.dp1{background:#8C2438;}
+  .card-status-badge .dot.on_progress{background:#C6A15B;}
+  .card-status-badge .dot.lunas{background:#2E7D50;}
+  .card-status-badge .dot.menunggu_album{background:#5C1220;}
+  .card-status-badge .dot.final{background:#D4AF37;box-shadow:0 0 0 2px rgba(212,175,55,.35);}
+  .v-cat .catleft{padding-right:96px;}
 
   .mb-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;}
   @media(max-width:760px){.mb-grid{grid-template-columns:1fr;}}
@@ -1351,7 +1353,8 @@ function projectCardHtml(p){
   const stage = computeProjectStage(p);
   return `
         <div class="v-card">
-          <div class="v-cat"><div class="catleft"><span class="emoji-stage-wrap" title="Status: ${stage.label}"><span class="emoji">💍</span><span class="emoji-stage-dot ${stage.key}"></span></span><span>${escapeHtml(p.brideName)} &amp; ${escapeHtml(p.groomName)}</span></div><span class="stage-badge ${stage.key}">${stage.label}</span></div>
+          <span class="card-status-badge" title="Status: ${stage.label}"><span class="dot ${stage.key}"></span>${stage.label}</span>
+          <div class="v-cat"><div class="catleft"><span class="emoji">💍</span><span>${escapeHtml(p.brideName)} &amp; ${escapeHtml(p.groomName)}</span></div></div>
           <div class="v-field"><label>Tanggal Nikah</label><div>${fmtDate(p.weddingDate)}</div></div>
           <div class="v-field"><label>Kode Project</label><div style="font-family:monospace;font-weight:700;">${escapeHtml(p.id)}</div></div>
           ${marketingBadge}
@@ -1381,6 +1384,25 @@ function marketingCardHtml(m){
           </div>
         </div>
   `;
+}
+
+async function openProjectDirect(id){
+  // Dipanggil dari tombol "Buka →" di dashboard. Peran (Admin/Marketing) sudah
+  // ditentukan sejak login ke dashboard tadi (lewat PIN masing-masing), jadi di sini
+  // kita TIDAK reset isAdmin/currentMarketing dan TIDAK menampilkan gate PIN lagi —
+  // admin langsung masuk sebagai admin, marketing langsung masuk sebagai marketing,
+  // dan marketing tetap tidak akan pernah melihat tampilan/akses admin.
+  const proj = await loadProjectById(id);
+  if(!proj){ await customAlert('Project tidak ditemukan, mungkin sudah dihapus.'); renderProjectDashboard(); return; }
+  currentProjectId = id;
+  state = proj;
+  await hydrateInvoiceAttachments();
+  viewingDashboard = false;
+  roleDecided = true;
+  const baseUrl = location.href.split('?')[0].split('#')[0];
+  const keepHash = location.hash === '#marketing' ? '#marketing' : '';
+  history.pushState(null, '', baseUrl + '?p=' + id + keepHash);
+  render();
 }
 
 function renderProjectDashboard(){
@@ -1502,10 +1524,7 @@ function renderProjectDashboard(){
     if(ok){ currentMarketing = me; showToast('PIN kamu diperbarui ✓'); }
     else { me.pin = oldPin; await customAlert('Gagal menyimpan PIN baru ke storage. PIN belum berubah.\n\nDetail: ' + (lastStorageError || 'tidak diketahui')); }
   });
-  document.querySelectorAll('[data-action="open-project"]').forEach(btn=> btn.addEventListener('click', ()=>{
-    const baseUrl = location.href.split('?')[0].split('#')[0];
-    location.href = baseUrl + '?p=' + btn.dataset.id;
-  }));
+  document.querySelectorAll('[data-action="open-project"]').forEach(btn=> btn.addEventListener('click', ()=> openProjectDirect(btn.dataset.id)));
   document.querySelectorAll('[data-action="delete-project"]').forEach(btn=> btn.addEventListener('click', async ()=>{
     if(await customConfirm('Hapus project ini beserta semua datanya? Tindakan ini tidak bisa dibatalkan.')){
       await deleteProject(btn.dataset.id);
@@ -1783,8 +1802,7 @@ function showNewProjectForm(){
     btn.textContent = 'Menyimpan...';
     try{
       const id = await createProject(bride, groom, marketingId, packageId);
-      const baseUrl = location.href.split('?')[0].split('#')[0];
-      location.href = baseUrl + '?p=' + id;
+      await openProjectDirect(id);
     }catch(e){
       console.error('createProject failed', e);
       showToast('Gagal membuat project — cek koneksi ke storage & coba lagi.', true);
