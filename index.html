@@ -635,24 +635,57 @@ async function saveMasterSettings(){
   return await storageSetWithRetry(MASTER_SETTINGS_KEY, JSON.stringify(masterSettings), true);
 }
 
-/* ---------- MARKETING ACCOUNTS (admin-managed, shared across all projects) ---------- */
+/* ---------- MARKETING ACCOUNTS (admin-managed, shared across all projects) ----------
+   Catatan penting: foto profil marketing TIDAK disimpan menempel di dalam
+   MARKETING_LIST_KEY. Kalau ditempel, daftar berisi banyak marketing (misal 15
+   akun) dengan foto masing-masing akan gampang melebihi batas ukuran satu
+   "sel" penyimpanan (Google Sheets) sehingga PENYIMPANAN GAGAL DIAM-DIAM —
+   ini penyebab bug "ganti PIN tidak tersimpan / balik ke PIN lama". Jadi foto
+   disimpan terpisah, satu key per marketing (marketingPhotoKey), dan daftar
+   utama (MARKETING_LIST_KEY) hanya berisi data ringan: id, name, phone, pin. */
+function marketingPhotoKey(id){ return 'mkt_photo_' + id; }
+
 async function loadMarketingList(){
   try{
     const res = await window.storage.get(MARKETING_LIST_KEY, true);
     marketingList = (res && res.value) ? JSON.parse(res.value) : [];
   }catch(e){ marketingList = []; }
+  // Ambil foto tiap marketing dari key terpisah (paralel), lalu tempel ke memori
+  // (bukan ke data yang akan disimpan balik) supaya render tetap bisa pakai m.photoUrl.
+  await Promise.all(marketingList.map(async m=>{
+    try{
+      const res = await window.storage.get(marketingPhotoKey(m.id), true);
+      m.photoUrl = (res && res.value) ? res.value : '';
+    }catch(e){ m.photoUrl = m.photoUrl || ''; }
+  }));
 }
 async function saveMarketingList(){
-  const ok = await storageSetWithRetry(MARKETING_LIST_KEY, JSON.stringify(marketingList), true);
+  // Buang photoUrl sebelum disimpan ke daftar utama — foto punya jalur sendiri (saveMarketingPhoto).
+  const lean = marketingList.map(({photoUrl, ...rest})=>rest);
+  const ok = await storageSetWithRetry(MARKETING_LIST_KEY, JSON.stringify(lean), true);
   if(!ok) return false;
   // Verifikasi: baca ulang dari storage untuk pastikan data yang tersimpan benar-benar yang terbaru,
   // bukan versi lama karena delay/replikasi di sisi storage.
   try{
     const res = await window.storage.get(MARKETING_LIST_KEY, true);
     const saved = (res && res.value) ? JSON.parse(res.value) : [];
-    if(JSON.stringify(saved) !== JSON.stringify(marketingList)){ lastStorageError = 'Data tidak cocok setelah verifikasi baca-ulang.'; return false; }
+    if(JSON.stringify(saved) !== JSON.stringify(lean)){ lastStorageError = 'Data tidak cocok setelah verifikasi baca-ulang.'; return false; }
   }catch(e){ lastStorageError = e.message || String(e); return false; }
   return true;
+}
+async function saveMarketingPhoto(id, dataUrl){
+  try{
+    if(dataUrl){
+      const ok = await storageSetWithRetry(marketingPhotoKey(id), dataUrl, true);
+      if(!ok) return false;
+    } else {
+      await window.storage.delete(marketingPhotoKey(id), true).catch(()=>{});
+    }
+    return true;
+  }catch(e){ lastStorageError = e.message || String(e); return false; }
+}
+async function deleteMarketingPhoto(id){
+  try{ await window.storage.delete(marketingPhotoKey(id), true); }catch(e){ /* abaikan kalau memang belum ada */ }
 }
 function findMarketingByPin(pin){
   return marketingList.find(m => m.pin === pin) || null;
@@ -1293,6 +1326,7 @@ function renderProjectDashboard(){
         const mid = btn.dataset.id;
         marketingList = marketingList.filter(m=>m.id!==mid);
         await saveMarketingList();
+        await deleteMarketingPhoto(mid);
         for(const p of projectsIndex.filter(p=>p.marketingId===mid)){
           p.marketingId = null;
           const proj = await loadProjectById(p.id);
@@ -1377,18 +1411,28 @@ function showMarketingForm(editId){
     if(marketingList.some(m => m.pin===pin && m.id!==(stillEditing?stillEditing.id:null))){ await customAlert('PIN ini sudah dipakai marketing lain, pakai PIN lain.'); return; }
     const btn = document.getElementById('saveMktBtn');
     btn.disabled = true; btn.textContent = 'Menyimpan...';
+    let targetId;
     if(stillEditing){
+      targetId = stillEditing.id;
       stillEditing.name = name; stillEditing.phone = phone; stillEditing.pin = pin; stillEditing.photoUrl = photoDraft;
     } else if(editing){
       // Data lama sudah tidak ada (mungkin terhapus di sesi lain), simpan sebagai akun baru dengan id yang sama.
-      marketingList.push({ id: editing.id, name, phone, pin, photoUrl: photoDraft });
+      targetId = editing.id;
+      marketingList.push({ id: targetId, name, phone, pin, photoUrl: photoDraft });
     } else {
-      marketingList.push({ id: uid('mkt'), name, phone, pin, photoUrl: photoDraft });
+      targetId = uid('mkt');
+      marketingList.push({ id: targetId, name, phone, pin, photoUrl: photoDraft });
     }
     const ok = await saveMarketingList();
     if(!ok){
       btn.disabled = false; btn.textContent = 'Simpan';
       await customAlert('Gagal menyimpan ke storage. PIN belum berubah.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
+      return;
+    }
+    const photoOk = await saveMarketingPhoto(targetId, photoDraft);
+    if(!photoOk){
+      btn.disabled = false; btn.textContent = 'Simpan';
+      await customAlert('Data (nama/telepon/PIN) tersimpan, tapi foto gagal diupload.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
       return;
     }
     showToast('Data marketing tersimpan ✓');
