@@ -955,6 +955,7 @@ function showEntryGate(){
           <input type="password" id="pinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Admin"/>
           <button class="btn primary" id="pinSubmit" style="width:100%;">Masuk</button>
           <div class="pin-error" id="pinError"></div>
+          <button type="button" id="forgotPinLink" style="background:none;border:none;padding:6px 0 0;font-size:12px;color:var(--gold);text-decoration:underline;cursor:pointer;">Lupa PIN Admin?</button>
         </div>`}
         <div class="pin-box" id="marketingPinBox">
           <input type="password" id="marketingPinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Marketing kamu"/>
@@ -985,6 +986,17 @@ function showEntryGate(){
     pinSubmit.addEventListener('click', tryPin);
     document.getElementById('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryPin(); });
   }
+  const forgotPinLink = document.getElementById('forgotPinLink');
+  if(forgotPinLink) forgotPinLink.addEventListener('click', async ()=>{
+    const ok = await customConfirm('Reset PIN Admin ke default (1234)? Siapa pun yang tahu ini bisa masuk sebagai admin sampai kamu ganti PIN-nya lagi.');
+    if(ok){
+      masterSettings.vendorPin = '1234';
+      await saveMasterSettings();
+      await customAlert('PIN Admin sudah direset ke 1234. Segera masuk dan ganti lagi lewat menu "🔑 Ganti PIN Admin".');
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinError').textContent = '';
+    }
+  });
 
   document.getElementById('gateMarketingBtn').addEventListener('click', ()=>{
     document.getElementById('marketingPinBox').classList.add('show');
@@ -1038,6 +1050,7 @@ function showProjectGate(){
           <input type="password" id="pinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Admin"/>
           <button class="btn primary" id="pinSubmit" style="width:100%;">Masuk</button>
           <div class="pin-error" id="pinError"></div>
+          <button type="button" id="forgotPinLink" style="background:none;border:none;padding:6px 0 0;font-size:12px;color:var(--gold);text-decoration:underline;cursor:pointer;">Lupa PIN Admin?</button>
         </div>
         <div class="pin-box" id="marketingPinBox">
           <input type="password" id="marketingPinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Marketing kamu"/>
@@ -1063,6 +1076,17 @@ function showProjectGate(){
   };
   document.getElementById('pinSubmit').addEventListener('click', tryPin);
   document.getElementById('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryPin(); });
+  const forgotPinLink = document.getElementById('forgotPinLink');
+  if(forgotPinLink) forgotPinLink.addEventListener('click', async ()=>{
+    const ok = await customConfirm('Reset PIN Admin ke default (1234)? Siapa pun yang tahu ini bisa masuk sebagai admin sampai kamu ganti PIN-nya lagi.');
+    if(ok){
+      masterSettings.vendorPin = '1234';
+      await saveMasterSettings();
+      await customAlert('PIN Admin sudah direset ke 1234. Segera masuk dan ganti lagi lewat menu "🔑 Ganti PIN Admin".');
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinError').textContent = '';
+    }
+  });
 
   document.getElementById('gateMarketingBtn').addEventListener('click', ()=>{
     document.getElementById('marketingPinBox').classList.add('show');
