@@ -1451,6 +1451,7 @@ function showEntryGate(){
 function showProjectGate(){
   const app = document.getElementById('app');
   const coupleLabel = `${state.couple.brideName} & ${state.couple.groomName}`;
+  const hideAdminVendor = location.hash === '#marketing';
   app.innerHTML = `
     <div class="gate-wrap" style="background-color:rgba(25,6,9,.82);background-image:url(&quot;${EVENT_PHOTO_SRC}&quot;);background-blend-mode:normal;background-size:cover;background-position:center;">
       <div class="gate-card">
@@ -1458,16 +1459,17 @@ function showProjectGate(){
         <h2>${escapeHtml(coupleLabel)}</h2>
         <p>Pilih tampilan sesuai perananmu di project ini.</p>
         <div class="gate-btns">
-          <button class="gate-btn vendor" id="gateAdminBtn"><span class="ge">🛡️</span> Saya Admin</button>
+          ${hideAdminVendor ? '' : `<button class="gate-btn vendor" id="gateAdminBtn"><span class="ge">🛡️</span> Saya Admin</button>`}
           <button class="gate-btn vendor" id="gateMarketingBtn"><span class="ge">🤝</span> Saya Marketing</button>
           <button class="gate-btn" id="gateClientBtn"><span class="ge">💍</span> Saya Calon Pengantin (Klien)</button>
-          <button class="gate-btn" id="gateSupplierBtn"><span class="ge">🧰</span> Saya Vendor</button>
+          ${hideAdminVendor ? '' : `<button class="gate-btn" id="gateSupplierBtn"><span class="ge">🧰</span> Saya Vendor</button>`}
         </div>
+        ${hideAdminVendor ? '' : `
         <div class="pin-box" id="pinBox">
           <input type="password" id="pinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Admin"/>
           <button class="btn primary" id="pinSubmit" style="width:100%;">Masuk</button>
           <div class="pin-error" id="pinError"></div>
-        </div>
+        </div>`}
         <div class="pin-box" id="marketingPinBox">
           <input type="password" id="marketingPinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Marketing kamu"/>
           <button class="btn primary" id="marketingPinSubmit" style="width:100%;">Masuk</button>
@@ -1481,7 +1483,8 @@ function showProjectGate(){
       </div>
     </div>
   `;
-  document.getElementById('gateAdminBtn').addEventListener('click', ()=>{
+  const gateAdminBtn = document.getElementById('gateAdminBtn');
+  if(gateAdminBtn) gateAdminBtn.addEventListener('click', ()=>{
     document.getElementById('pinBox').classList.add('show');
     document.getElementById('pinInput').focus();
   });
@@ -1490,8 +1493,11 @@ function showProjectGate(){
     if(val === masterSettings.vendorPin){ vendorAuthed = true; isAdmin = true; isVendor = true; currentMarketing = null; roleDecided = true; render(); }
     else document.getElementById('pinError').textContent = 'PIN salah, coba lagi.';
   };
-  document.getElementById('pinSubmit').addEventListener('click', tryPin);
-  document.getElementById('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryPin(); });
+  const pinSubmit = document.getElementById('pinSubmit');
+  if(pinSubmit){
+    pinSubmit.addEventListener('click', tryPin);
+    document.getElementById('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryPin(); });
+  }
 
   document.getElementById('gateMarketingBtn').addEventListener('click', ()=>{
     document.getElementById('marketingPinBox').classList.add('show');
@@ -1522,7 +1528,8 @@ function showProjectGate(){
   };
   document.getElementById('clientPassSubmit').addEventListener('click', tryClientPass);
   document.getElementById('clientPassInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryClientPass(); });
-  document.getElementById('gateSupplierBtn').addEventListener('click', ()=> showSupplierGate());
+  const gateSupplierBtn = document.getElementById('gateSupplierBtn');
+  if(gateSupplierBtn) gateSupplierBtn.addEventListener('click', ()=> showSupplierGate());
   bindPwToggles();
 }
 
