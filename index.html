@@ -38,20 +38,23 @@
   #app{position:relative;z-index:1;max-width:1080px;width:100%;margin:0 auto;padding:20px 18px 80px;}
   h1,h2,h3,.display{font-family:'Fraunces',serif;}
 
-  .app-loading-screen{min-height:70vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--cream-dim);font-size:14px;}
-  .app-loading-spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(122,31,46,0.15);border-top-color:var(--pink);animation:app-spin .8s linear infinite;}
+  .app-loading-plain{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-size:14px;text-align:center;padding:20px;animation:fadeUp .3s ease;}
+  .app-loading-spinner{width:36px;height:36px;border-radius:50%;border:3px solid rgba(255,255,255,.28);border-top-color:var(--gold);animation:app-spin .8s linear infinite;}
   @keyframes app-spin{to{transform:rotate(360deg);}}
-  /* Layar loading bermerek (dipakai renderLoadingScreen) — supaya transisi antar
-     tahap (login -> buka project -> dashboard) tidak terasa "blank", tapi tetap
-     terlihat sebagai bagian dari aplikasi (logo, kartu, background sama seperti gate). */
-  .app-loading-card{display:flex;flex-direction:column;align-items:center;gap:6px;animation:fadeUp .3s ease;}
-  .app-loading-card .gate-logo{margin-bottom:6px;}
-  .app-loading-card .app-loading-spinner{width:36px;height:36px;border-width:3px;border-color:rgba(255,255,255,.28);border-top-color:var(--gold);margin:4px 0 2px;}
-  .app-loading-card .app-loading-text{color:rgba(255,255,255,.88);font-size:13.5px;font-weight:600;letter-spacing:.01em;}
-  /* Spinner kecil di dalam tombol saat proses login/submit berjalan */
-  .btn-spinner{display:inline-block;width:13px;height:13px;border-radius:50%;border:2px solid rgba(59,16,21,.28);border-top-color:var(--ink);animation:app-spin .7s linear infinite;vertical-align:-2px;margin-right:7px;}
-  .btn:not(.primary) .btn-spinner{border-color:rgba(122,31,46,.28);border-top-color:var(--pink);}
-  .gate-card .btn:not(.primary) .btn-spinner{border-color:rgba(255,255,255,.35);border-top-color:#fff;}
+  .app-loading-text{font-weight:600;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.4);}
+  .app-loading-slow{margin-top:6px;padding-top:14px;border-top:1px solid rgba(255,255,255,.28);animation:fadeUp .3s ease;max-width:320px;}
+  .app-loading-slow p{color:rgba(255,255,255,.78);font-size:12px;margin:0 0 10px;line-height:1.5;}
+  .app-loading-slow .btn.ghost{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.55);color:#fff;}
+  .app-loading-slow .btn.ghost:hover{background:rgba(255,255,255,.2);}
+  /* Overlay loading (dipakai buka project & kembali ke Semua Project) — halaman
+     yang sedang tampil TETAP kelihatan di belakang, cuma diredupkan + dikasih
+     kartu spinner kecil di tengah, bukan diganti jadi layar lain. */
+  .app-loading-overlay{position:fixed;inset:0;z-index:60;background:rgba(59,16,21,.5);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px;animation:fadeUp .2s ease;}
+  .app-loading-overlay-card{background:rgba(92,18,32,.94);border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:26px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 18px 40px rgba(59,16,21,.45);text-align:center;max-width:320px;}
+  .app-loading-overlay-card .app-loading-spinner{width:32px;height:32px;border-color:rgba(255,255,255,.28);border-top-color:var(--gold);}
+  .app-loading-overlay-card .app-loading-text{color:#fff;font-size:13.5px;font-weight:600;}
+  .app-loading-overlay-card .app-loading-slow{border-top-color:rgba(255,255,255,.25);}
+  .app-loading-overlay-card .app-loading-slow p{color:rgba(255,255,255,.78);}
 
   input,textarea,select{background:var(--field-bg);color:var(--cream);border:1px solid rgba(198,161,91,.45);box-shadow:inset 0 1px 2px rgba(122,31,46,.05);font-family:inherit;accent-color: var(--pink);}
   input::placeholder,textarea::placeholder{color:var(--cream-dimmer);}
@@ -1453,13 +1456,15 @@ function showEntryGate(){
   });
   const tryMarketingPin = async ()=>{
     const val = document.getElementById('marketingPinInput').value.trim();
-    const btn = document.getElementById('marketingPinSubmit');
-    setBtnLoading(btn, 'Memeriksa...');
-    document.getElementById('marketingPinError').textContent = '';
+    renderLoadingScreen('Memeriksa PIN...');
     await loadMarketingList();
     const m = findMarketingByPin(val);
     if(m){ isAdmin = false; isVendor = true; vendorAuthed = true; currentMarketing = m; showProjectDashboard(); }
-    else { clearBtnLoading(btn); document.getElementById('marketingPinError').textContent = 'PIN salah, atau akun marketing belum dibuat admin.'; }
+    else {
+      showEntryGate();
+      document.getElementById('gateMarketingBtn').click();
+      showToast('PIN salah, atau akun marketing belum dibuat admin.', true);
+    }
   };
   document.getElementById('marketingPinSubmit').addEventListener('click', tryMarketingPin);
   document.getElementById('marketingPinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryMarketingPin(); });
@@ -1471,9 +1476,7 @@ function showEntryGate(){
   const tryClientCode = async ()=>{
     const code = document.getElementById('clientCodeInput').value.trim();
     const pass = document.getElementById('clientCodePassInput').value.trim();
-    const btn = document.getElementById('clientCodeSubmit');
-    setBtnLoading(btn, 'Memeriksa...');
-    document.getElementById('clientCodeError').textContent = '';
+    renderLoadingScreen('Memeriksa kode project...');
     const proj = code ? await loadProjectById(code) : null;
     if(proj && proj.clientPassword === pass){
       currentProjectId = code; state = proj; isVendor = false; isAdmin = false; roleDecided = true;
@@ -1482,8 +1485,9 @@ function showEntryGate(){
       render();
       hydrateAttachmentsInBackground();
     } else {
-      clearBtnLoading(btn);
-      document.getElementById('clientCodeError').textContent = 'Kode project atau password salah.';
+      showEntryGate();
+      document.getElementById('gateClientBtn').click();
+      showToast('Kode project atau password salah.', true);
     }
   };
   document.getElementById('clientCodeSubmit').addEventListener('click', tryClientCode);
@@ -1548,15 +1552,19 @@ function showProjectGate(){
   });
   const tryMarketingPin = async ()=>{
     const val = document.getElementById('marketingPinInput').value.trim();
-    const btn = document.getElementById('marketingPinSubmit');
-    setBtnLoading(btn, 'Memeriksa...');
-    document.getElementById('marketingPinError').textContent = '';
+    renderLoadingScreen('Memeriksa PIN...');
     await loadMarketingList();
     const m = findMarketingByPin(val);
-    if(!m){ clearBtnLoading(btn); document.getElementById('marketingPinError').textContent = 'PIN salah, atau akun marketing belum dibuat admin.'; return; }
+    if(!m){
+      showProjectGate();
+      document.getElementById('gateMarketingBtn').click();
+      showToast('PIN salah, atau akun marketing belum dibuat admin.', true);
+      return;
+    }
     if(state.marketingId && state.marketingId !== m.id){
-      clearBtnLoading(btn);
-      document.getElementById('marketingPinError').textContent = 'Project ini bukan link klien kamu.';
+      showProjectGate();
+      document.getElementById('gateMarketingBtn').click();
+      showToast('Project ini bukan link klien kamu.', true);
       return;
     }
     isAdmin = false; isVendor = true; vendorAuthed = true; currentMarketing = m; roleDecided = true; render();
@@ -1630,46 +1638,84 @@ function showClientPasswordGate(){
   bindPwToggles();
 }
 
+let loadingScreenGen = 0;
 function renderLoadingScreen(message){
-  // Dibungkus persis seperti layar gate (logo + kartu + background) supaya saat
-  // pindah tahap (login -> buka project -> semua project) tandanya tetap terlihat
-  // menempel di layar, bukan berubah jadi halaman kosong lalu muncul lagi.
+  // Dibungkus gate-wrap supaya background foto slideshow tetap tampil (tidak
+  // blank) — tapi TANPA kartu merah & logo, cuma tulisan + ikon berputar
+  // mengambang di atas background itu.
   const app = document.getElementById('app');
+  const gen = ++loadingScreenGen;
   app.innerHTML = `
     <div class="gate-wrap">
-      <div class="gate-card app-loading-card">
-        <img src="${LOGO_SRC}" class="gate-logo" alt="ArtaJava"/>
+      <div class="app-loading-plain">
         <div class="app-loading-spinner"></div>
         <div class="app-loading-text">${escapeHtml(message||'Memuat...')}</div>
+        <div class="app-loading-slow" id="appLoadingSlow${gen}" style="display:none;">
+          <p>Koneksi terasa lambat dari biasanya. Kalau ini kelamaan, coba muat ulang halamannya.</p>
+          <button class="btn ghost small" id="appLoadingReload${gen}">🔄 Muat Ulang Halaman</button>
+        </div>
       </div>
     </div>
   `;
+  const reloadBtn = document.getElementById('appLoadingReload'+gen);
+  if(reloadBtn) reloadBtn.addEventListener('click', ()=> location.reload());
+  // Kalau layar loading ini masih tampil setelah 9 detik (biasanya karena koneksi ke
+  // storage lambat), munculkan tombol "Muat Ulang" supaya orang tidak terjebak diam
+  // menatap spinner tanpa jalan keluar. `gen` memastikan ini tidak mengganggu kalau
+  // layar sudah keburu pindah ke tahap lain sebelum 9 detik itu lewat.
+  setTimeout(()=>{
+    if(gen !== loadingScreenGen) return;
+    const slow = document.getElementById('appLoadingSlow'+gen);
+    if(slow) slow.style.display = 'block';
+  }, 9000);
 }
 
-/* Tanda loading di dalam tombol (dipakai saat submit login yang perlu menunggu
-   jaringan) — tombol dikunci & diberi spinner kecil supaya orang tahu prosesnya
-   sedang berjalan, alih-alih layar terlihat diam/blank. */
-function setBtnLoading(btn, loadingLabel){
-  if(!btn || btn.dataset.loading==='1') return;
-  btn.dataset.loading = '1';
-  btn.dataset.originalHtml = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = `<span class="btn-spinner"></span>${escapeHtml(loadingLabel||'Memproses...')}`;
+let loadingOverlayGen = 0;
+function showLoadingOverlay(message){
+  // Beda dengan renderLoadingScreen: ini TIDAK mengganti isi #app, cuma
+  // menempelkan lapisan redup + kartu spinner kecil di ATAS halaman yang
+  // sedang tampil (mis. Semua Project, atau halaman project) — jadi orang
+  // tetap lihat halamannya, cuma tahu lagi ada proses berjalan.
+  hideLoadingOverlay();
+  const gen = ++loadingOverlayGen;
+  const el = document.createElement('div');
+  el.className = 'app-loading-overlay';
+  el.id = 'appLoadingOverlay';
+  el.innerHTML = `
+    <div class="app-loading-overlay-card">
+      <div class="app-loading-spinner"></div>
+      <div class="app-loading-text">${escapeHtml(message||'Memuat...')}</div>
+      <div class="app-loading-slow" id="appOverlaySlow${gen}" style="display:none;">
+        <p>Koneksi terasa lambat dari biasanya. Kalau ini kelamaan, coba muat ulang halamannya.</p>
+        <button class="btn ghost small" id="appOverlayReload${gen}">🔄 Muat Ulang Halaman</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  const reloadBtn = document.getElementById('appOverlayReload'+gen);
+  if(reloadBtn) reloadBtn.addEventListener('click', ()=> location.reload());
+  setTimeout(()=>{
+    if(gen !== loadingOverlayGen) return;
+    const slow = document.getElementById('appOverlaySlow'+gen);
+    if(slow) slow.style.display = 'block';
+  }, 9000);
 }
-function clearBtnLoading(btn){
-  if(!btn || btn.dataset.loading!=='1') return;
-  btn.disabled = false;
-  btn.innerHTML = btn.dataset.originalHtml || btn.innerHTML;
-  delete btn.dataset.loading;
-  delete btn.dataset.originalHtml;
+function hideLoadingOverlay(){
+  loadingOverlayGen++; // matikan timer "koneksi lambat" milik overlay sebelumnya
+  const el = document.getElementById('appLoadingOverlay');
+  if(el) el.remove();
 }
 
 /* ---------- VENDOR/ADMIN PROJECT DASHBOARD ---------- */
-async function showProjectDashboard(){
+async function showProjectDashboard(overlay){
   viewingDashboard = true;
   roleDecided = false;
-  renderLoadingScreen('Memuat semua project...');
-  await Promise.all([loadProjectsIndex(), loadMarketingList()]);
+  if(overlay) showLoadingOverlay('Memuat semua project...');
+  else renderLoadingScreen('Memuat semua project...');
+  try{
+    await Promise.all([loadProjectsIndex(), loadMarketingList()]);
+  }catch(e){ console.error('showProjectDashboard load failed', e); }
+  if(overlay) hideLoadingOverlay();
   renderProjectDashboard();
 }
 
@@ -1864,9 +1910,10 @@ function renderProjectDashboard(){
     // yang sudah login di dashboard ini dipakai apa adanya.
     const id = btn.dataset.id;
     btn.disabled = true;
-    renderLoadingScreen('Membuka project...');
+    showLoadingOverlay('Membuka project...');
     const proj = await loadProjectById(id);
-    if(!proj){ renderProjectDashboard(); await customAlert('Project tidak ditemukan atau gagal dimuat.'); return; }
+    hideLoadingOverlay();
+    if(!proj){ btn.disabled = false; await customAlert('Project tidak ditemukan atau gagal dimuat.'); return; }
     currentProjectId = id;
     state = proj;
     attachmentsHydrated = false;
@@ -2902,7 +2949,7 @@ function attachHandlers(){
   if(switchRoleBtn) switchRoleBtn.addEventListener('click', ()=>{ roleDecided = false; showProjectGate(); });
 
   const backToDashboardBtn = document.getElementById('backToDashboardBtn');
-  if(backToDashboardBtn) backToDashboardBtn.addEventListener('click', ()=>{ roleDecided = false; showProjectDashboard(); });
+  if(backToDashboardBtn) backToDashboardBtn.addEventListener('click', ()=>{ roleDecided = false; showProjectDashboard(true); });
 
   const changeMyPinBtn = document.getElementById('changeMyPin');
   if(changeMyPinBtn) changeMyPinBtn.addEventListener('click', async ()=>{
