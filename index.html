@@ -682,6 +682,8 @@ function normalizeState(s){
     if(!v.addons) v.addons = [];
     if(!v.progress) v.progress = [];
     if(!Array.isArray(v.packageItems)) v.packageItems = [];
+    if(typeof v.cateringPackageDesc !== 'string') v.cateringPackageDesc = '';
+    if(typeof v.cateringPaxBuffet !== 'string') v.cateringPaxBuffet = '';
     if(isExtra && !v.emoji) v.emoji = '⭐';
     // migrate price from free text/string to number
     if(typeof v.price !== 'number'){ v.price = parseInt(digitsOnly(v.price),10) || 0; }
@@ -2303,6 +2305,10 @@ function renderVendorCard(key, v, opts){
         </select>
       </div>
       <div class="v-field"><label>Catatan</label><textarea data-field="note" placeholder="Catatan tambahan..." ${isVendor?'':'disabled'}>${escapeHtml(v.note)}</textarea></div>
+      ${(key==='Katering' && !isExtra) ? `
+      <div class="v-field"><label>Nama Paket Catering</label><input data-field="cateringPackageDesc" value="${escapeAttr(v.cateringPackageDesc)}" placeholder="Misal: Paket Prasmanan Deluxe" ${isVendor?'':'disabled'}/></div>
+      <div class="v-field"><label>Jumlah Pax Buffet</label><input data-field="cateringPaxBuffet" value="${escapeAttr(v.cateringPaxBuffet)}" placeholder="Misal: 500 pax buffet" ${isVendor?'':'disabled'}/></div>
+      ` : ''}
 
       <div class="subsection">
         <h4>📦 Paket yang Didapat</h4>
