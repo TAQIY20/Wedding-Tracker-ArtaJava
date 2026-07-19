@@ -929,7 +929,7 @@ function hydrateMarketingPhotosInBackground(){
     const cache = {};
     marketingList.forEach(m=>{ if(m.photoUrl) cache[m.id] = m.photoUrl; });
     writeMktPhotoCache(cache);
-    try{ render(); }catch(e){}
+    try{ if(viewingDashboard) renderProjectDashboard(); else if(roleDecided) render(); }catch(e){}
   });
 }
 async function loadMarketingList(){
@@ -1697,15 +1697,15 @@ function renderLoadingScreen(message){
   `;
   const reloadBtn = document.getElementById('appLoadingReload'+gen);
   if(reloadBtn) reloadBtn.addEventListener('click', ()=> location.reload());
-  // Kalau layar loading ini masih tampil setelah 3 detik (biasanya karena koneksi ke
+  // Kalau layar loading ini masih tampil setelah 7 detik (biasanya karena koneksi ke
   // storage lambat), munculkan tombol "Muat Ulang" supaya orang tidak terjebak diam
   // menatap spinner tanpa jalan keluar. `gen` memastikan ini tidak mengganggu kalau
-  // layar sudah keburu pindah ke tahap lain sebelum 3 detik itu lewat.
+  // layar sudah keburu pindah ke tahap lain sebelum 7 detik itu lewat.
   setTimeout(()=>{
     if(gen !== loadingScreenGen) return;
     const slow = document.getElementById('appLoadingSlow'+gen);
     if(slow) slow.style.display = 'block';
-  }, 3000);
+  }, 7000);
 }
 
 let loadingOverlayGen = 0;
@@ -1736,7 +1736,7 @@ function showLoadingOverlay(message){
     if(gen !== loadingOverlayGen) return;
     const slow = document.getElementById('appOverlaySlow'+gen);
     if(slow) slow.style.display = 'block';
-  }, 3000);
+  }, 7000);
 }
 function hideLoadingOverlay(){
   loadingOverlayGen++; // matikan timer "koneksi lambat" milik overlay sebelumnya
