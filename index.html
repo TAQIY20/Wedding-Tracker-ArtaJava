@@ -2068,7 +2068,7 @@ function render(){
       ${tabBtn('vendor','🤝 Vendor')}
       ${!isSupplier ? tabBtn('pembayaran','💳 Pembayaran') : ''}
       ${tabBtn('detail','📋 Detail Acara')}
-      ${tabBtn('moodboard',`🎨 Moodboard${openRequests?` · ${openRequests}`:''}`)}
+      ${tabBtn('moodboard','🎨 Moodboard')}
     </div>
 
     <section class="panel ${currentTab==='beranda'?'active':''}">${renderBeranda(dLeft, allVendorList)}</section>
@@ -2243,7 +2243,7 @@ function renderTimeline(){
   const sorted = [...state.timeline].sort((a,b)=> a.date.localeCompare(b.date));
   return `
     <div class="section-head">
-      <div><h2>Timeline Persiapan</h2><p>Fleksibel — ${isVendor?'geser tanggal kapan aja sesuai kebutuhan lapangan.':'kamu bisa konfirmasi kehadiran & pantau progres di sini.'}</p></div>
+      <div><h2>Timeline Persiapan</h2><p>Fleksibel — ${isVendor?'geser tanggal kapan aja sesuai kebutuhan lapangan.':(isSupplier?'kamu bisa pantau agenda & progresnya di sini.':'kamu bisa konfirmasi kehadiran & pantau progres di sini.')}</p></div>
       ${isVendor ? `<button class="btn primary" id="addTimelineItem">+ Tambah Agenda</button>` : ''}
     </div>
     <div class="timeline">
@@ -2256,7 +2256,7 @@ function renderTimeline(){
               <textarea class="t-desc" data-field="desc" rows="2" ${isVendor?'':'disabled'}>${escapeHtml(item.desc)}</textarea>
               <div class="t-meta">
                 <div class="t-date">📅 <input type="date" data-field="date" value="${item.date}" ${isVendor?'':'disabled'} /></div>
-                ${!isVendor ? `<label class="confirm-toggle"><input type="checkbox" data-field="clientConfirmed" ${item.clientConfirmed?'checked':''}/> Aku konfirmasi bisa di jadwal ini</label>` : (item.clientConfirmed ? `<span class="chip done">✓ Dikonfirmasi klien</span>` : `<span class="chip upcoming">Menunggu konfirmasi klien</span>`)}
+                ${(!isVendor && !isSupplier) ? `<label class="confirm-toggle"><input type="checkbox" data-field="clientConfirmed" ${item.clientConfirmed?'checked':''}/> Aku konfirmasi bisa di jadwal ini</label>` : (item.clientConfirmed ? `<span class="chip done">✓ Dikonfirmasi klien</span>` : `<span class="chip upcoming">Menunggu konfirmasi klien</span>`)}
               </div>
             </div>
             <div class="t-right">
@@ -2481,9 +2481,9 @@ function renderDetailAcara(){
 
     <div class="mb-card">
       <h3>🍽️ Catering</h3>
-      <div class="v-field"><label>Nama Paket Catering</label><input id="cateringPackageInput" value="${escapeAttr(c.packageName)}" placeholder="Misal: Paket Prasmanan Deluxe"/></div>
-      <div class="v-field"><label>Jumlah Undangan</label><input id="cateringGuestCountInput" type="number" min="0" value="${escapeAttr(c.guestCount)}" placeholder="Misal: 500"/></div>
-      <div class="v-field"><label>Nama PIC Keluarga</label><input id="cateringFamilyPicInput" value="${escapeAttr(c.familyPicName)}" placeholder="Nama PIC dari pihak keluarga untuk koordinasi catering"/></div>
+      <div class="v-field"><label>Nama Paket Catering</label><input id="cateringPackageInput" value="${escapeAttr(c.packageName)}" placeholder="Misal: Paket Prasmanan Deluxe" ${isSupplier?'disabled':''}/></div>
+      <div class="v-field"><label>Jumlah Undangan</label><input id="cateringGuestCountInput" type="number" min="0" value="${escapeAttr(c.guestCount)}" placeholder="Misal: 500" ${isSupplier?'disabled':''}/></div>
+      <div class="v-field"><label>Nama PIC Keluarga</label><input id="cateringFamilyPicInput" value="${escapeAttr(c.familyPicName)}" placeholder="Nama PIC dari pihak keluarga untuk koordinasi catering" ${isSupplier?'disabled':''}/></div>
       <h4 style="margin:16px 0 8px;">🍲 Olahan Buffet</h4>
       ${renderListSection('details.catering.menuItems', [
         {key:'name', placeholder:'Menu (misal: Sate Ayam)', flex:2},
@@ -2598,7 +2598,7 @@ function getByPath(path){
 
 function renderListSection(path, cols, opts){
   opts = opts || {};
-  const editable = opts.vendorOnly ? isVendor : true;
+  const editable = opts.vendorOnly ? isVendor : !isSupplier;
   const arr = getByPath(path) || [];
   return `
     <div class="mini-list" data-listpath="${path}">
