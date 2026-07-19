@@ -622,6 +622,7 @@ function defaultData(brideName, groomName, id, marketingId, pkg){
     marketingId: marketingId || null,
     packageId: pkg ? pkg.id : null,
     clientSource: '',
+    clientSourceDate: '',
     documents: { mou: null, rundown: null },
     couple: { brideName: brideName || 'Nama Mempelai Wanita', groomName: groomName || 'Nama Mempelai Pria', hashtag:'#TheWeddingOf', weddingDate, venueName:'', akadDate: weddingDate, akadLocation:'' },
     timeline: defaultTimeline(weddingDate),
@@ -635,7 +636,7 @@ function defaultData(brideName, groomName, id, marketingId, pkg){
       {id:uid('p'), label:'DP 20%', amount:dp20, dueDate: weddingDate, status:'unpaid'},
       {id:uid('p'), label:'Pelunasan (Sisa 80%)', amount:pelunasan, dueDate: weddingDate, status:'unpaid'},
     ],
-    moodboard: { concept: pkg ? (pkg.note||'') : '', tags:['Minimalis','Garden Party'], palette:['#7A1F2E','#C6A15B','#F5E8D0'], links:[] },
+    moodboard: { concept: pkg ? (pkg.note||'') : '', notes:[], tags:['Minimalis','Garden Party'], palette:['#7A1F2E','#C6A15B','#F5E8D0'], links:[] },
     requests: [],
     bonuses: [],
     details: {
@@ -664,6 +665,7 @@ function normalizeState(s){
   if(typeof s.marketingId === 'undefined') s.marketingId = null;
   if(typeof s.packageId === 'undefined') s.packageId = null;
   if(typeof s.clientSource !== 'string') s.clientSource = '';
+  if(typeof s.clientSourceDate !== 'string') s.clientSourceDate = '';
   if(!s.documents) s.documents = { mou: null, rundown: null };
   if(typeof s.documents.mou === 'undefined') s.documents.mou = null;
   if(typeof s.documents.rundown === 'undefined') s.documents.rundown = null;
@@ -693,6 +695,9 @@ function normalizeState(s){
   if(!s.couple.akadDate) s.couple.akadDate = s.couple.weddingDate;
   if(typeof s.couple.akadLocation !== 'string') s.couple.akadLocation = '';
   if(!s.moodboard) s.moodboard = defaultData().moodboard;
+  if(!Array.isArray(s.moodboard.notes)){
+    s.moodboard.notes = s.moodboard.concept ? [{id:uid('mn'), vendorKey:'Umum', text:s.moodboard.concept, by:'client', date:new Date().toISOString()}] : [];
+  }
   if(typeof s.budget !== 'number') s.budget = 0;
   if(typeof s.packageName !== 'string') s.packageName = '';
   if(!Array.isArray(s.bonuses)) s.bonuses = [];
@@ -2069,6 +2074,10 @@ function renderBeranda(dLeft, allVendorList){
         <label>Klien ini berasal dari</label>
         <input id="clientSourceInput" value="${escapeAttr(state.clientSource)}" placeholder="Misal: Pameran, Kantor, Media Sosial, Referensi..." ${isVendor?'':'disabled'}/>
       </div>
+      <div class="v-field">
+        <label>Tanggal</label>
+        <input type="date" id="clientSourceDateInput" value="${escapeAttr(state.clientSourceDate)}" ${isVendor?'':'disabled'}/>
+      </div>
     </div>
     ` : ''}
     <div class="mb-card">
@@ -2151,14 +2160,14 @@ function renderBeranda(dLeft, allVendorList){
               <div class="req-item ${r.status}">
                 <div class="req-text">${escapeHtml(r.text)}</div>
                 <div class="req-meta">
-                  <span>${new Date(r.date).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} · ${r.by==='client'?'Klien':'Vendor'}${r.status==='done'?' · ✓ Selesai':''}</span>
+                  <span>${new Date(r.date).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} · ${r.by==='client'?'Klien':'Marketing'}${r.status==='done'?' · ✓ Selesai':''}</span>
                   ${isVendor ? `<span class="row-actions"><button class="btn small" data-action="toggle-request" data-id="${r.id}">${r.status==='done'?'↺ Buka lagi':'✓ Tandai selesai'}</button><button class="btn small danger" data-action="delete-request" data-id="${r.id}">🗑️</button></span>` : ''}
                 </div>
               </div>
             `).join('') : `<div class="empty-mini">Belum ada catatan/request.</div>`}
           </div>
           <div class="add-inline">
-            <input id="requestInput" placeholder="${isVendor?'Tulis catatan/update buat klien...':'Tulis request atau pertanyaan buat vendor...'}"/>
+            <input id="requestInput" placeholder="${isVendor?'Tulis catatan/update buat klien...':'Tulis request atau pertanyaan buat marketing...'}"/>
             <button class="mini-add-btn" id="addRequest" title="Kirim">+</button>
           </div>
         </div>
@@ -2501,7 +2510,26 @@ function renderMoodboard(){
     <div class="mb-grid">
       <div>
         <div class="mb-card"><h3>💭 Konsep & Catatan Moodboard</h3>
-          <textarea id="conceptInput" placeholder="Ceritain konsep impian kalian — tema, suasana, referensi...">${escapeHtml(m.concept)}</textarea></div>
+          <div id="moodNoteList">
+            ${(m.notes||[]).length ? [...m.notes].sort((a,b)=> new Date(b.date)-new Date(a.date)).map(n=>`
+              <div class="req-item">
+                <div class="req-text"><span style="display:inline-block;background:rgba(212,175,55,.16);color:#7A5B12;padding:2px 9px;border-radius:100px;font-size:11px;font-weight:600;margin-right:6px;vertical-align:1px;">${escapeHtml(n.vendorKey||'Umum')}</span>${escapeHtml(n.text)}</div>
+                <div class="req-meta">
+                  <span>${new Date(n.date).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} · ${n.by==='client'?'Klien':'Marketing'}</span>
+                  ${isVendor ? `<span class="row-actions"><button class="btn small danger" data-action="delete-moodnote" data-id="${n.id}">🗑️</button></span>` : ''}
+                </div>
+              </div>
+            `).join('') : `<div class="empty-mini">Belum ada catatan.</div>`}
+          </div>
+          <div class="add-inline">
+            <select id="moodNoteVendorSelect" style="flex:1;min-width:150px;padding:8px 10px;border-radius:10px;font-size:13px;">
+              <option value="Umum">🗒️ Umum (semua vendor)</option>
+              ${activeVendorCats().map(c=>`<option value="${escapeAttr(c.key)}">${escapeAttr(c.emoji||'')} ${escapeAttr(c.key)}</option>`).join('')}
+            </select>
+            <input id="conceptInput" placeholder="Tulis konsep/catatan untuk vendor yang dipilih..."/>
+            <button class="mini-add-btn" id="addMoodNote" title="Tambah">+</button>
+          </div>
+        </div>
         <div class="mb-card"><h3>🔗 Referensi (Pinterest, moodboard link, dll)</h3>
           ${m.links.map((l,i)=>`<div class="ref-link" data-idx="${i}"><a href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.title || l.url)}</a><button class="btn small danger" data-action="delete-link">✕</button></div>`).join('') || `<div class="empty-mini">Belum ada link referensi.</div>`}
           <div class="add-inline"><input id="refTitleInput" placeholder="Judul (opsional)"/><input id="refUrlInput" placeholder="https://..."/><button class="mini-add-btn" id="addRefLink" title="Tambah">+</button></div>
@@ -2669,6 +2697,8 @@ function attachHandlers(){
 
     const clientSourceInput = document.getElementById('clientSourceInput');
     if(clientSourceInput) clientSourceInput.addEventListener('input', e=>{ state.clientSource = e.target.value; scheduleSave(); });
+    const clientSourceDateInput = document.getElementById('clientSourceDateInput');
+    if(clientSourceDateInput) clientSourceDateInput.addEventListener('input', e=>{ state.clientSourceDate = e.target.value; scheduleSave(); });
 
     document.querySelectorAll('[data-action="upload-doc"]').forEach(input=>{
       input.addEventListener('change', async e=>{
@@ -2761,8 +2791,21 @@ function attachHandlers(){
   document.querySelectorAll('[data-action="delete-tag"]').forEach(btn=> btn.addEventListener('click', ()=>{ state.moodboard.tags.splice(Number(btn.dataset.idx),1); scheduleSave(); render(); }));
   document.querySelectorAll('[data-action="delete-color"]').forEach(btn=> btn.addEventListener('click', ()=>{ state.moodboard.palette.splice(Number(btn.dataset.idx),1); scheduleSave(); render(); }));
   document.querySelectorAll('[data-action="delete-link"]').forEach(btn=> btn.addEventListener('click', ()=>{ const row = btn.closest('[data-idx]'); state.moodboard.links.splice(Number(row.dataset.idx),1); scheduleSave(); render(); }));
+  const addMoodNote = document.getElementById('addMoodNote');
+  const doAddMoodNote = ()=>{
+    const inp = document.getElementById('conceptInput');
+    const sel = document.getElementById('moodNoteVendorSelect');
+    const val = inp.value.trim();
+    if(val){
+      if(!Array.isArray(state.moodboard.notes)) state.moodboard.notes = [];
+      state.moodboard.notes.push({id:uid('mn'), vendorKey: sel ? sel.value : 'Umum', text:val, by: isVendor?'vendor':'client', date:new Date().toISOString()});
+      scheduleSave(); render();
+    }
+  };
+  if(addMoodNote) addMoodNote.addEventListener('click', doAddMoodNote);
   const conceptInput = document.getElementById('conceptInput');
-  if(conceptInput) conceptInput.addEventListener('input', e=>{ state.moodboard.concept = e.target.value; scheduleSave(); });
+  if(conceptInput) conceptInput.addEventListener('keydown', e=>{ if(e.key==='Enter') doAddMoodNote(); });
+  document.querySelectorAll('[data-action="delete-moodnote"]').forEach(btn=> btn.addEventListener('click', ()=>{ state.moodboard.notes = (state.moodboard.notes||[]).filter(x=>x.id!==btn.dataset.id); scheduleSave(); render(); }));
 
   const addRequest = document.getElementById('addRequest');
   const doAddRequest = ()=>{
