@@ -947,15 +947,35 @@ async function storageSetWithRetry(key, value, shared, retries){
    lebih besar dari itu tetap bisa disimpan, kita pecah jadi beberapa key
    ("chunk") lalu simpan daftar potongannya di satu key "meta". Waktu dibaca,
    semua chunk diambil lalu disambung lagi. Tetap kompatibel dengan invoice
-   lama yang masih disimpan sebagai satu key polos (tanpa meta). */
-const STORAGE_CHUNK_SIZE = 40000;
-async function storageSetChunkedWithRetry(baseKey, value, shared){
+   lama yang masih disimpan sebagai satu key polos (tanpa meta).
+   Chunk-chunk ini dikirim BERBARENGAN (beberapa sekaligus, bukan satu-satu
+   berurutan) supaya file besar tidak butuh waktu lama / terlihat seperti
+   macet tanpa keterangan apa pun saat diunggah. */
+const STORAGE_CHUNK_SIZE = 43000;
+const STORAGE_CHUNK_CONCURRENCY = 6;
+async function runWithConcurrency(taskFns, limit, onProgress){
+  const results = new Array(taskFns.length);
+  let nextIndex = 0, done = 0;
+  async function worker(){
+    while(nextIndex < taskFns.length){
+      const i = nextIndex++;
+      results[i] = await taskFns[i]();
+      done++;
+      if(onProgress) onProgress(done, taskFns.length);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(limit, taskFns.length)}, ()=> worker()));
+  return results;
+}
+async function storageSetChunkedWithRetry(baseKey, value, shared, onProgress){
   const newChunkCount = Math.max(1, Math.ceil(value.length / STORAGE_CHUNK_SIZE));
+  const tasks = [];
   for(let i=0;i<newChunkCount;i++){
     const part = value.slice(i*STORAGE_CHUNK_SIZE, (i+1)*STORAGE_CHUNK_SIZE);
-    const ok = await storageSetWithRetry(baseKey + '_c' + i, part, shared);
-    if(!ok) return false;
+    tasks.push(()=> storageSetWithRetry(baseKey + '_c' + i, part, shared));
   }
+  const results = await runWithConcurrency(tasks, STORAGE_CHUNK_CONCURRENCY, onProgress);
+  if(results.some(ok=>!ok)) return false;
   const metaOk = await storageSetWithRetry(baseKey + '_meta', JSON.stringify({chunks:newChunkCount}), shared);
   return metaOk;
 }
@@ -2295,7 +2315,7 @@ function renderPayments(){
                 <a class="invoice-chip" href="${invoiceFileCache[p.id] || '#'}" download="${escapeAttr(p.invoice.name)}" target="_blank" rel="noopener">📎 ${escapeHtml(p.invoice.name)}</a>
                 ${isVendor ? `<button class="mi-del" data-action="delete-invoice" title="Hapus lampiran invoice">✕</button>` : ''}
               ` : (isVendor ? `
-                <label class="invoice-upload-btn">📎 Lampirkan Invoice<input type="file" accept="image/*,application/pdf" data-action="upload-invoice" hidden/></label>
+                <label class="invoice-upload-btn" id="invoiceUploadLabel_${p.id}">📎 Lampirkan Invoice<input type="file" accept="image/*,application/pdf" data-action="upload-invoice" hidden/></label>
               ` : `
                 <span class="invoice-empty">Belum ada invoice dilampirkan.</span>
               `)}
@@ -2739,7 +2759,15 @@ function attachHandlers(){
     if(invoiceInput) invoiceInput.addEventListener('change', async e=>{
       const file = e.target.files && e.target.files[0];
       if(!file) return;
-      if(file.size > 8*1024*1024){ await customAlert('Ukuran file maksimal 8MB. Pilih file yang lebih kecil ya.'); e.target.value=''; return; }
+      if(file.size > 20*1024*1024){ await customAlert('Ukuran file maksimal 20MB. Pilih file yang lebih kecil ya.'); e.target.value=''; return; }
+      const label = document.getElementById('invoiceUploadLabel_' + id);
+      const setLabelText = (txt)=>{ if(label) label.childNodes[0].nodeValue = txt; };
+      const originalLabelText = '📎 Lampirkan Invoice';
+      // Kasih tahu langsung kalau prosesnya sedang berjalan, supaya tidak
+      // terlihat seperti macet/tidak ada respons — terutama untuk file besar
+      // yang perlu waktu lebih lama untuk diunggah.
+      if(label) label.style.pointerEvents = 'none';
+      setLabelText('⏳ Menyiapkan file...');
       try{
         let dataUrl, type;
         if(file.type && file.type.startsWith('image/')){
@@ -2760,19 +2788,26 @@ function attachHandlers(){
           type = file.type;
         }
         // Simpan file invoice ke key TERPISAH dari data project (state), dipecah
-        // jadi beberapa chunk kalau perlu, supaya tidak kena batas ukuran per-key
-        // dan tidak ikut membengkakkan ukuran seluruh data project setiap kali disimpan.
-        const ok = await storageSetChunkedWithRetry(invoiceFileKey(state.id, p.id), dataUrl, true);
+        // jadi beberapa chunk yang dikirim berbarengan (bukan satu-satu) supaya
+        // tidak kena batas ukuran per-key dan tidak lama tanpa keterangan apa pun.
+        const ok = await storageSetChunkedWithRetry(invoiceFileKey(state.id, p.id), dataUrl, true, (done, total)=>{
+          setLabelText(total>1 ? `⏳ Mengunggah... ${Math.round(done/total*100)}%` : '⏳ Mengunggah...');
+        });
         if(!ok){
           await customAlert('Gagal menyimpan invoice ke storage.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
+          setLabelText(originalLabelText);
+          if(label) label.style.pointerEvents = '';
           e.target.value = '';
           return;
         }
         invoiceFileCache[p.id] = dataUrl;
         p.invoice = { name:file.name, type };
+        showToast('Invoice berhasil diunggah ✓');
         scheduleSave(); render();
       }catch(err){
         await customAlert('Gagal memproses file invoice: ' + (err.message || err));
+        setLabelText(originalLabelText);
+        if(label) label.style.pointerEvents = '';
         e.target.value = '';
       }
     });
