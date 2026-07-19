@@ -200,6 +200,8 @@
   .v-field textarea{resize:none;min-height:44px;-webkit-appearance:none;}
   .v-field textarea::-webkit-resizer{display:none;}
   .v-field input:disabled,.v-field textarea:disabled,.v-field select:disabled{opacity:.85;background:transparent;border-color:transparent;padding-left:0;}
+  .cd-card .v-field label{font-size:12px;}
+  .cd-card .v-field input, .cd-card .v-field textarea{font-size:15px;}
 
   .subsection{margin-top:12px;padding-top:12px;border-top:1px dashed var(--card-border);}
   .subsection h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--cream-dim);display:flex;align-items:center;gap:6px;}
@@ -283,7 +285,7 @@
   /* Checkbox & native date-picker icon: samakan ke tema maroon/gold biar ga "putih polos" */
   input[type="checkbox"]{width:16px;height:16px;accent-color:var(--pink);cursor:pointer;}
   input[type="date"]{position:relative;}
-  input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(21%) sepia(45%) saturate(1600%) hue-rotate(315deg) brightness(85%);cursor:pointer;opacity:.85;}
+  input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(21%) sepia(45%) saturate(1600%) hue-rotate(315deg) brightness(85%);cursor:pointer;opacity:.85;width:15px;height:15px;padding:3px;background-size:15px 15px;}
   input[type="date"]::-webkit-calendar-picker-indicator:hover{opacity:1;}
   .ref-link{display:flex;justify-content:space-between;align-items:center;background:rgba(122,31,46,.05);border:1px solid var(--card-border);border-radius:12px;padding:10px 12px;margin-top:8px;gap:8px;}
   .ref-link a{color:var(--gold);text-decoration:none;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -2307,7 +2309,7 @@ function renderBeranda(dLeft, allVendorList){
       <h3>🏷️ Tema Acara</h3>
       <div class="tags">${state.moodboard.tags.map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
     </div>` : ''}
-    <div class="mb-card">
+    <div class="mb-card cd-card">
       <h3>Data CPW</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
         <div class="v-field"><label>Nama Lengkap</label><textarea id="cdCpwNameInput" rows="1" placeholder="Nama calon pengantin wanita" ${isVendor?'':'disabled'}>${escapeHtml(cd.cpwName)}</textarea></div>
@@ -2318,7 +2320,7 @@ function renderBeranda(dLeft, allVendorList){
         <div class="v-field"><label>Nama Ibu</label><textarea id="cdCpwMotherInput" rows="1" placeholder="Nama ibu CPW" ${isVendor?'':'disabled'}>${escapeHtml(cd.cpwMotherName)}</textarea></div>
       </div>
     </div>
-    <div class="mb-card">
+    <div class="mb-card cd-card">
       <h3>Data CPP</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
         <div class="v-field"><label>Nama Lengkap</label><textarea id="cdCppNameInput" rows="1" placeholder="Nama calon pengantin pria" ${isVendor?'':'disabled'}>${escapeHtml(cd.cppName)}</textarea></div>
@@ -3060,7 +3062,13 @@ function attachHandlers(){
         return;
       }
       const evt = field.tagName==='SELECT' ? 'change' : 'input';
-      field.addEventListener(evt, e=>{ v[fkey] = e.target.value; scheduleSave(); if(fkey==='status' || fkey==='category') render(); });
+      field.addEventListener(evt, e=>{ v[fkey] = e.target.value; scheduleSave(); if(fkey==='status') render(); });
+      if(fkey==='category'){
+        // Render ulang penuh dipicu saat SELESAI mengetik (blur), bukan tiap huruf
+        // diketik — sebelumnya render() dipanggil di setiap keystroke dan bikin
+        // layar mendadak lompat/scroll ke atas tiap kali mengetik nama vendor baru.
+        field.addEventListener('blur', ()=> render());
+      }
     });
 
     const delVendorBtn = el.querySelector('[data-action="delete-vendor"]');
