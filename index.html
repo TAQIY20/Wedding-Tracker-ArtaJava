@@ -417,8 +417,11 @@ function projectKey(id){ return 'wedding_project_' + APP_VERSION + '_' + id; }
 /* File invoice TIDAK ikut disimpan menempel di dalam data project (state).
    Kalau ditempel, satu blok data project (tamu+jadwal+pembayaran+dll jadi satu)
    gampang kelewat batas ukuran storage backend (45000 karakter) begitu ada
-   invoice foto/PDF. Jadi file invoice disimpan di key terpisah per pembayaran,
-   dan hanya metadata ringan (nama, tipe) yang tersimpan di state.
+   invoice foto/PDF. Jadi file invoice disimpan di key terpisah per pembayaran.
+   Karena batas backend cuma ±45000 karakter PER KEY, file yang lebih besar
+   dari itu (PDF terutama) dipecah jadi beberapa "chunk" key lewat
+   storageSetChunkedWithRetry/storageGetChunked — lihat definisinya di atas.
+   Hanya metadata ringan (nama, tipe) yang tersimpan di state.
    invoiceFileCache menyimpan isi file invoice untuk project yang lagi dibuka,
    sengaja TIDAK ditempelkan ke object `state` supaya tidak ikut ter-save ulang. */
 function invoiceFileKey(projectId, paymentId){ return 'inv_file_' + projectId + '_' + paymentId; }
@@ -431,14 +434,14 @@ async function hydrateInvoiceAttachments(){
     if(p.invoice.dataUrl){
       // Data lama: dataUrl masih nempel di state (format sebelum perbaikan ini) — migrasikan ke key terpisah.
       invoiceFileCache[p.id] = p.invoice.dataUrl;
-      try{ await storageSetWithRetry(invoiceFileKey(state.id, p.id), p.invoice.dataUrl, true); }catch(e){ /* kalau gagal, biarkan tetap di state supaya tidak hilang */ return; }
+      try{ await storageSetChunkedWithRetry(invoiceFileKey(state.id, p.id), p.invoice.dataUrl, true); }catch(e){ /* kalau gagal, biarkan tetap di state supaya tidak hilang */ return; }
       p.invoice = { name: p.invoice.name, type: p.invoice.type };
       needsResave = true;
       return;
     }
     try{
-      const res = await window.storage.get(invoiceFileKey(state.id, p.id), true);
-      if(res && res.value) invoiceFileCache[p.id] = res.value;
+      const val = await storageGetChunked(invoiceFileKey(state.id, p.id), true);
+      if(val) invoiceFileCache[p.id] = val;
     }catch(e){ /* biarkan kosong kalau gagal ambil, link invoice tidak akan tampil */ }
   }));
   if(needsResave) scheduleSave();
@@ -894,7 +897,7 @@ async function deleteProject(id){
     if(res && res.value){
       const proj = JSON.parse(res.value);
       await Promise.all((proj.payments||[]).filter(p=>p.invoice).map(p=>
-        window.storage.delete(invoiceFileKey(id, p.id), true).catch(()=>{})
+        storageDeleteChunked(invoiceFileKey(id, p.id), true).catch(()=>{})
       ));
     }
   }catch(e){ /* kalau gagal ambil data lama, lanjut hapus project-nya saja */ }
@@ -938,6 +941,56 @@ async function storageSetWithRetry(key, value, shared, retries){
   console.error('storage set failed after retries', lastErr);
   return false;
 }
+
+/* ---------- CHUNKED STORAGE (untuk file besar seperti PDF invoice) ----------
+   Backend storage cuma bisa nyimpen ±45000 karakter per key. Biar file yang
+   lebih besar dari itu tetap bisa disimpan, kita pecah jadi beberapa key
+   ("chunk") lalu simpan daftar potongannya di satu key "meta". Waktu dibaca,
+   semua chunk diambil lalu disambung lagi. Tetap kompatibel dengan invoice
+   lama yang masih disimpan sebagai satu key polos (tanpa meta). */
+const STORAGE_CHUNK_SIZE = 40000;
+async function storageSetChunkedWithRetry(baseKey, value, shared){
+  const newChunkCount = Math.max(1, Math.ceil(value.length / STORAGE_CHUNK_SIZE));
+  for(let i=0;i<newChunkCount;i++){
+    const part = value.slice(i*STORAGE_CHUNK_SIZE, (i+1)*STORAGE_CHUNK_SIZE);
+    const ok = await storageSetWithRetry(baseKey + '_c' + i, part, shared);
+    if(!ok) return false;
+  }
+  const metaOk = await storageSetWithRetry(baseKey + '_meta', JSON.stringify({chunks:newChunkCount}), shared);
+  return metaOk;
+}
+async function storageGetChunked(baseKey, shared){
+  try{
+    const metaRes = await window.storage.get(baseKey + '_meta', shared);
+    if(metaRes && metaRes.value){
+      const meta = JSON.parse(metaRes.value);
+      const parts = await Promise.all(Array.from({length: meta.chunks}, (_,i)=>
+        window.storage.get(baseKey + '_c' + i, shared).catch(()=>null)
+      ));
+      return parts.map(p=> (p && p.value) || '').join('');
+    }
+  }catch(e){ /* fall through ke cara lama di bawah */ }
+  // Fallback: invoice lama yang disimpan sebagai satu key polos (belum sempat kena batas ukuran).
+  try{
+    const legacyRes = await window.storage.get(baseKey, shared);
+    if(legacyRes && legacyRes.value) return legacyRes.value;
+  }catch(e){ /* memang belum ada file tersimpan */ }
+  return null;
+}
+async function storageDeleteChunked(baseKey, shared){
+  try{
+    const metaRes = await window.storage.get(baseKey + '_meta', shared).catch(()=>null);
+    if(metaRes && metaRes.value){
+      const meta = JSON.parse(metaRes.value);
+      await Promise.all(Array.from({length: meta.chunks}, (_,i)=>
+        window.storage.delete(baseKey + '_c' + i, shared).catch(()=>{})
+      ));
+      await window.storage.delete(baseKey + '_meta', shared).catch(()=>{});
+    }
+  }catch(e){ /* abaikan */ }
+  await window.storage.delete(baseKey, shared).catch(()=>{}); // hapus juga kalau ada sisa format lama
+}
+
 async function persist(){
   if(!state || !state.id) return;
   const ok = await storageSetWithRetry(projectKey(state.id), JSON.stringify(state), true);
@@ -2686,16 +2739,18 @@ function attachHandlers(){
     if(invoiceInput) invoiceInput.addEventListener('change', async e=>{
       const file = e.target.files && e.target.files[0];
       if(!file) return;
-      if(file.size > 4*1024*1024){ await customAlert('Ukuran file maksimal 4MB. Pilih file yang lebih kecil ya.'); e.target.value=''; return; }
+      if(file.size > 8*1024*1024){ await customAlert('Ukuran file maksimal 8MB. Pilih file yang lebih kecil ya.'); e.target.value=''; return; }
       try{
         let dataUrl, type;
         if(file.type && file.type.startsWith('image/')){
-          // Invoice berupa foto: kompres dulu biar tidak kena batas ukuran storage.
+          // Invoice berupa foto: kompres dulu biar ukurannya wajar.
           dataUrl = await compressImageFile(file, { maxChars: 40000, maxDim: 1000 });
           type = 'image/jpeg';
         } else {
-          // PDF tidak bisa dikompres di browser — batas storage per-item sekitar 5MB (base64),
-          // jadi kasih ruang aman di bawah itu (~4.5MB base64, setara ±3.3MB file PDF asli).
+          // PDF tidak bisa dikompres di browser. Backend storage cuma bisa nyimpen
+          // ±45000 karakter per key, jadi file PDF dipecah jadi beberapa key
+          // ("chunk") lewat storageSetChunkedWithRetry di bawah — bukan disimpan
+          // sebagai satu key besar, supaya tidak kena batas itu.
           const reader = new FileReader();
           dataUrl = await new Promise((resolve, reject)=>{
             reader.onload = ()=> resolve(reader.result);
@@ -2703,15 +2758,11 @@ function attachHandlers(){
             reader.readAsDataURL(file);
           });
           type = file.type;
-          if(dataUrl.length > 4700000){
-            await customAlert('File PDF ini terlalu besar untuk disimpan (batas sekitar 3.3MB per file). Coba kompres PDF-nya dulu, atau lampirkan sebagai foto/scan.');
-            e.target.value = '';
-            return;
-          }
         }
-        // Simpan file invoice ke key TERPISAH dari data project (state), supaya
-        // tidak ikut membengkakkan ukuran seluruh data project setiap kali disimpan.
-        const ok = await storageSetWithRetry(invoiceFileKey(state.id, p.id), dataUrl, true);
+        // Simpan file invoice ke key TERPISAH dari data project (state), dipecah
+        // jadi beberapa chunk kalau perlu, supaya tidak kena batas ukuran per-key
+        // dan tidak ikut membengkakkan ukuran seluruh data project setiap kali disimpan.
+        const ok = await storageSetChunkedWithRetry(invoiceFileKey(state.id, p.id), dataUrl, true);
         if(!ok){
           await customAlert('Gagal menyimpan invoice ke storage.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
           e.target.value = '';
@@ -2730,7 +2781,7 @@ function attachHandlers(){
       if(await customConfirm('Hapus lampiran invoice ini?')){
         p.invoice = null;
         delete invoiceFileCache[id];
-        try{ await window.storage.delete(invoiceFileKey(state.id, id), true); }catch(e){ /* kalau memang belum ada, abaikan */ }
+        try{ await storageDeleteChunked(invoiceFileKey(state.id, id), true); }catch(e){ /* kalau memang belum ada, abaikan */ }
         scheduleSave(); render();
       }
     });
