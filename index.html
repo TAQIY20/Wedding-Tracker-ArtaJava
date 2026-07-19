@@ -1059,9 +1059,11 @@ async function deleteProject(id){
       ));
     }
   }catch(e){ /* kalau gagal ambil data lama, lanjut hapus project-nya saja */ }
-  try{ await window.storage.delete(projectKey(id), true); }catch(e){}
   projectsIndex = projectsIndex.filter(p=>p.id!==id);
-  await saveProjectsIndex();
+  await Promise.all([
+    window.storage.delete(projectKey(id), true).catch(()=>{}),
+    saveProjectsIndex()
+  ]);
 }
 
 async function renameProjectCode(newCode){
@@ -1076,10 +1078,14 @@ async function renameProjectCode(newCode){
   state.id = newCode;
   const ok = await storageSetWithRetry(projectKey(newCode), JSON.stringify(state), true);
   if(!ok){ state.id = oldId; return {ok:false, msg:'Gagal menyimpan kode baru, coba lagi.'}; }
-  try{ await window.storage.delete(oldKey, true); }catch(e){}
   const idxEntry = projectsIndex.find(p=>p.id===oldId);
   if(idxEntry) idxEntry.id = newCode;
-  await saveProjectsIndex();
+  // Hapus key lama & simpan index bersamaan (paralel) — keduanya tidak saling
+  // bergantung, jadi tidak perlu ditunggu satu-satu berurutan.
+  await Promise.all([
+    window.storage.delete(oldKey, true).catch(()=>{}),
+    saveProjectsIndex()
+  ]);
   currentProjectId = newCode;
   history.replaceState(null, '', location.pathname + '?p=' + newCode);
   return {ok:true};
@@ -1896,8 +1902,11 @@ function renderProjectDashboard(){
     document.querySelectorAll('[data-action="edit-package"]').forEach(btn=> btn.addEventListener('click', ()=> showPackageForm(btn.dataset.id)));
     document.querySelectorAll('[data-action="delete-package"]').forEach(btn=> btn.addEventListener('click', async ()=>{
       if(await customConfirm('Hapus paket ini? Project yang sudah dibuat pakai paket ini tidak akan berubah.')){
+        btn.disabled = true;
+        showLoadingOverlay('Menghapus paket...');
         packageList = packageList.filter(pk=>pk.id!==btn.dataset.id);
         await savePackageList();
+        hideLoadingOverlay();
         renderProjectDashboard();
       }
     }));
@@ -1914,16 +1923,21 @@ function renderProjectDashboard(){
     document.querySelectorAll('[data-action="edit-marketing"]').forEach(btn=> btn.addEventListener('click', ()=> showMarketingForm(btn.dataset.id)));
     document.querySelectorAll('[data-action="delete-marketing"]').forEach(btn=> btn.addEventListener('click', async ()=>{
       if(await customConfirm('Hapus akun marketing ini? Project yang sudah ditugaskan ke dia akan jadi "Belum ditugaskan".')){
+        btn.disabled = true;
+        showLoadingOverlay('Menghapus marketing...');
         const mid = btn.dataset.id;
         marketingList = marketingList.filter(m=>m.id!==mid);
-        await saveMarketingList();
-        await deleteMarketingPhoto(mid);
-        for(const p of projectsIndex.filter(p=>p.marketingId===mid)){
-          p.marketingId = null;
-          const proj = await loadProjectById(p.id);
-          if(proj){ proj.marketingId = null; await storageSetWithRetry(projectKey(p.id), JSON.stringify(proj), true); }
-        }
+        await Promise.all([
+          saveMarketingList(),
+          deleteMarketingPhoto(mid),
+          Promise.all(projectsIndex.filter(p=>p.marketingId===mid).map(async p=>{
+            p.marketingId = null;
+            const proj = await loadProjectById(p.id);
+            if(proj){ proj.marketingId = null; await storageSetWithRetry(projectKey(p.id), JSON.stringify(proj), true); }
+          }))
+        ]);
         await saveProjectsIndex();
+        hideLoadingOverlay();
         renderProjectDashboard();
       }
     }));
@@ -1966,7 +1980,10 @@ function renderProjectDashboard(){
   }));
   document.querySelectorAll('[data-action="delete-project"]').forEach(btn=> btn.addEventListener('click', async ()=>{
     if(await customConfirm('Hapus project ini beserta semua datanya? Tindakan ini tidak bisa dibatalkan.')){
+      btn.disabled = true;
+      showLoadingOverlay('Menghapus project...');
       await deleteProject(btn.dataset.id);
+      hideLoadingOverlay();
       renderProjectDashboard();
     }
   }));
@@ -2022,7 +2039,8 @@ function showMarketingForm(editId){
     const stillEditing = editing ? findMarketingById(editing.id) : null;
     if(marketingList.some(m => m.pin===pin && m.id!==(stillEditing?stillEditing.id:null))){ await customAlert('PIN ini sudah dipakai marketing lain, pakai PIN lain.'); return; }
     const btn = document.getElementById('saveMktBtn');
-    btn.disabled = true; btn.textContent = 'Menyimpan...';
+    btn.disabled = true;
+    showLoadingOverlay('Menyimpan data marketing...');
     let targetId;
     if(stillEditing){
       targetId = stillEditing.id;
@@ -2037,13 +2055,15 @@ function showMarketingForm(editId){
     }
     const ok = await saveMarketingList();
     if(!ok){
-      btn.disabled = false; btn.textContent = 'Simpan';
+      hideLoadingOverlay();
+      btn.disabled = false;
       await customAlert('Gagal menyimpan ke storage. PIN belum berubah.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
       return;
     }
     const photoOk = await saveMarketingPhoto(targetId, photoDraft);
+    hideLoadingOverlay();
     if(!photoOk){
-      btn.disabled = false; btn.textContent = 'Simpan';
+      btn.disabled = false;
       await customAlert('Data (nama/telepon/PIN) tersimpan, tapi foto gagal diupload.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
       return;
     }
@@ -2166,12 +2186,21 @@ function showPackageForm(editId, draft){
       if(lines.length) catItems[key] = lines;
     });
     if(!name){ await customAlert('Nama paket wajib diisi.'); return; }
+    const btn = document.getElementById('savePkgBtn');
+    btn.disabled = true;
+    showLoadingOverlay('Menyimpan paket...');
     if(editing){
       editing.name = name; editing.note = note; editing.includedCats = includedCats; editing.catItems = catItems;
     } else {
       packageList.push({ id: uid('pkg'), name, note, includedCats, catItems });
     }
-    await savePackageList();
+    const ok = await savePackageList();
+    hideLoadingOverlay();
+    if(!ok){
+      btn.disabled = false;
+      await customAlert('Gagal menyimpan paket ke storage.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
+      return;
+    }
     showToast('Paket tersimpan ✓');
     renderProjectDashboard();
   });
@@ -2243,7 +2272,7 @@ function showNewProjectForm(){
     }
     const btn = document.getElementById('createProjectBtn');
     btn.disabled = true;
-    btn.textContent = 'Menyimpan...';
+    showLoadingOverlay('Membuat project...');
     try{
       // Tetap di halaman project setelah selesai dibuat (tidak reload/redirect ke
       // layar pilih peran admin/marketing/klien/vendor) — peran yang sudah login
@@ -2258,13 +2287,14 @@ function showNewProjectForm(){
       currentTab = 'beranda';
       const hash = location.hash === '#marketing' ? '#marketing' : '';
       history.pushState({}, '', baseUrl + '?p=' + project.id + hash);
+      hideLoadingOverlay();
       render();
       hydrateAttachmentsInBackground();
     }catch(e){
       console.error('createProject failed', e);
+      hideLoadingOverlay();
       showToast('Gagal membuat project — cek koneksi ke storage & coba lagi.', true);
       btn.disabled = false;
-      btn.textContent = 'Buat Project';
     }
   });
 }
