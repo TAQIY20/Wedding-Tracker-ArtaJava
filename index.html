@@ -472,6 +472,8 @@ const PIC_PHONE_DISPLAY = "085755768427";
 const PIC_WA = "https://wa.me/6285755768427";
 
 let isVendor = false;
+let isSupplier = false;        // true when logged in via the field-vendor link (real supplier: MUA/Katering/dll — no PIN, no password)
+let supplierVendorKey = null;  // which vendor category this supplier session represents
 let isAdmin = false;            // true only for the Admin role (full access to everything)
 let roleDecided = false;
 let currentProjectId = null;   // id of the currently open project (from ?p=)
@@ -1192,6 +1194,7 @@ async function initRoleFlow(){
     await hydrateInvoiceAttachments();
     await hydrateDocumentAttachments();
     if(location.hash === '#client'){ showClientPasswordGate(); }
+    else if(location.hash === '#vendor'){ showSupplierGate(); }
     else { showProjectGate(); }
   } else {
     await Promise.all([
@@ -1322,6 +1325,7 @@ function showProjectGate(){
           <button class="gate-btn vendor" id="gateAdminBtn"><span class="ge">🛡️</span> Saya Admin</button>
           <button class="gate-btn vendor" id="gateMarketingBtn"><span class="ge">🤝</span> Saya Marketing</button>
           <button class="gate-btn" id="gateClientBtn"><span class="ge">💍</span> Saya Calon Pengantin (Klien)</button>
+          <button class="gate-btn" id="gateSupplierBtn"><span class="ge">🧰</span> Saya Vendor</button>
         </div>
         <div class="pin-box" id="pinBox">
           <input type="password" id="pinInput" inputmode="numeric" maxlength="8" placeholder="Masukkan PIN Admin"/>
@@ -1382,7 +1386,31 @@ function showProjectGate(){
   };
   document.getElementById('clientPassSubmit').addEventListener('click', tryClientPass);
   document.getElementById('clientPassInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryClientPass(); });
+  document.getElementById('gateSupplierBtn').addEventListener('click', ()=> showSupplierGate());
   bindPwToggles();
+}
+
+function showSupplierGate(){
+  const app = document.getElementById('app');
+  const coupleLabel = `${state.couple.brideName} & ${state.couple.groomName}`;
+  const cats = activeVendorCats();
+  app.innerHTML = `
+    <div class="gate-wrap" style="background-color:rgba(25,6,9,.82);background-image:url(&quot;${EVENT_PHOTO_SRC}&quot;);background-blend-mode:normal;background-size:cover;background-position:center;">
+      <div class="gate-card">
+        <img src="${LOGO_SRC}" class="gate-logo" alt="ArtaJava"/>
+        <h2>${escapeHtml(coupleLabel)}</h2>
+        <p>Kamu masuk sebagai vendor lapangan — tidak perlu PIN. Pilih kamu vendor yang mana:</p>
+        <div class="gate-btns" style="flex-wrap:wrap;flex-direction:row;">
+          ${cats.length ? cats.map(c=>`<button class="gate-btn" style="flex:1 1 45%;" data-supplier-key="${escapeAttr(c.key)}">${c.emoji||'⭐'} ${escapeHtml(c.key)}</button>`).join('') : `<p style="color:var(--cream-dimmer);font-size:13px;">Belum ada kategori vendor di paket project ini.</p>`}
+        </div>
+      </div>
+    </div>
+  `;
+  document.querySelectorAll('[data-supplier-key]').forEach(btn=> btn.addEventListener('click', ()=>{
+    isSupplier = true; supplierVendorKey = btn.dataset.supplierKey; isVendor = false; isAdmin = false; currentMarketing = null; roleDecided = true; currentTab = 'beranda';
+    history.replaceState(null, '', location.pathname + '?p=' + state.id + '#vendor');
+    render();
+  }));
 }
 
 function showClientPasswordGate(){
@@ -1917,6 +1945,7 @@ function setTab(tab){ currentTab = tab; render(); }
 /* ---------- MAIN RENDER ---------- */
 function render(){
   if(!roleDecided){ showProjectGate(); return; }
+  if(isSupplier && currentTab==='pembayaran'){ currentTab = 'beranda'; }
   const app = document.getElementById('app');
   const totalItems = state.timeline.length;
   const doneItems = state.timeline.filter(t=>t.status==='done').length;
@@ -1933,6 +1962,7 @@ function render(){
   const baseUrl = location.href.split('?')[0].split('#')[0];
   const projectUrl = baseUrl + '?p=' + state.id;
   const clientLink = projectUrl + '#client';
+  const supplierLink = projectUrl + '#vendor';
 
   const projMkt = state.marketingId ? findMarketingById(state.marketingId) : null;
   const picPhoto = projMkt ? (projMkt.photoUrl || LOGO_SRC) : PIC_PHOTO_SRC;
@@ -1942,6 +1972,8 @@ function render(){
   const picRoleLabel = projMkt ? 'Marketing' : 'PIC WO';
   const topPicChipHtml = isAdmin
     ? `<div class="pic-chip"><div class="pic-info"><div class="pic-name">🛡️ Admin</div><div class="pic-role">Akses penuh ke semua project &amp; marketing</div></div></div>`
+    : isSupplier
+    ? `<div class="pic-chip"><div class="pic-info"><div class="pic-name">🧰 ${escapeHtml(supplierVendorKey||'Vendor')}</div><div class="pic-role">Akses vendor lapangan</div></div></div>`
     : `<div class="pic-chip">
           <img class="pic-avatar" src="${picPhoto}" alt="${escapeHtml(picName)}"/>
           <div class="pic-info">
@@ -1979,7 +2011,12 @@ function render(){
         <input class="lp-input" id="pinEditInput" style="max-width:140px;flex:none;" value="${escapeAttr(state.clientPassword)}" maxlength="20"/>
         <button class="btn small" id="regenClientPass">🎲 Acak Baru</button>
       </div>
-      <div class="lp-note">Kirim <b>link + password</b> ini ke klien ini saja — tiap klien punya link &amp; password sendiri, jadi datanya tidak akan tercampur dengan klien lain. Admin masuk lewat PIN Admin, dan tiap anggota marketing masuk lewat PIN Marketing masing-masing di halaman "Semua Project" — marketing hanya akan melihat klien yang dia buat sendiri, sementara Admin bisa melihat &amp; mengubah semuanya.<br>Kalau link di atas tidak mau kebuka di HP klien, minta klien buka halaman utama lalu pilih <b>"Saya Calon Pengantin (Klien)"</b> dan masukkan <b>Kode Project</b> + Password secara manual — cara ini selalu berfungsi.</div>
+      <div class="lp-row">
+        <span class="lp-label">Link Vendor</span>
+        <input class="lp-input" id="supplierLinkBox" readonly value="${escapeAttr(supplierLink)}"/>
+        <button class="btn small" id="copySupplierLink">📋 Salin</button>
+      </div>
+      <div class="lp-note">Kirim <b>link + password</b> ini ke klien ini saja — tiap klien punya link &amp; password sendiri, jadi datanya tidak akan tercampur dengan klien lain. Admin masuk lewat PIN Admin, dan tiap anggota marketing masuk lewat PIN Marketing masing-masing di halaman "Semua Project" — marketing hanya akan melihat klien yang dia buat sendiri, sementara Admin bisa melihat &amp; mengubah semuanya.<br>Kalau link di atas tidak mau kebuka di HP klien, minta klien buka halaman utama lalu pilih <b>"Saya Calon Pengantin (Klien)"</b> dan masukkan <b>Kode Project</b> + Password secara manual — cara ini selalu berfungsi.<br><b>Link Vendor</b> bisa dibagikan ke semua vendor lapangan project ini (MUA, katering, dekorasi, dll) — tidak perlu password, mereka tinggal pilih sendiri vendor yang mana saat masuk. Mereka hanya bisa lihat Beranda (dan kasih catatan), Timeline, Vendor (tanpa Add-Ons), Detail Acara, dan Moodboard — tidak bisa lihat Pembayaran.</div>
     </div>` : ''}
 
     <div class="hero">
@@ -2016,8 +2053,9 @@ function render(){
     <div class="stats">
       <div class="stat-card"><div class="top"><span class="lbl">Vendor Terkonfirmasi</span><span class="icon">🤝</span></div>
         <div class="big">${vendorsBooked} / ${allVendorList.length}</div><div class="bar"><div style="width:${Math.round(vendorsBooked/(allVendorList.length||1)*100)}%"></div></div></div>
+      ${!isSupplier ? `
       <div class="stat-card"><div class="top"><span class="lbl">Pembayaran Lunas</span><span class="icon">💸</span></div>
-        <div class="big">${paidCount} / ${state.payments.length}</div><div class="bar"><div style="width:${Math.round(paidCount/(state.payments.length||1)*100)}%"></div></div></div>
+        <div class="big">${paidCount} / ${state.payments.length}</div><div class="bar"><div style="width:${Math.round(paidCount/(state.payments.length||1)*100)}%"></div></div></div>` : ''}
       <div class="stat-card"><div class="top"><span class="lbl">Agenda Selesai</span><span class="icon">🗓️</span></div>
         <div class="big">${doneItems} / ${totalItems}</div><div class="bar"><div style="width:${progressPct}%"></div></div></div>
       <div class="stat-card"><div class="top"><span class="lbl">Progres Vendor</span><span class="icon">📈</span></div>
@@ -2028,7 +2066,7 @@ function render(){
       ${tabBtn('beranda','✨ Beranda')}
       ${tabBtn('timeline','🗓️ Timeline')}
       ${tabBtn('vendor','🤝 Vendor')}
-      ${tabBtn('pembayaran','💳 Pembayaran')}
+      ${!isSupplier ? tabBtn('pembayaran','💳 Pembayaran') : ''}
       ${tabBtn('detail','📋 Detail Acara')}
       ${tabBtn('moodboard',`🎨 Moodboard${openRequests?` · ${openRequests}`:''}`)}
     </div>
@@ -2036,7 +2074,7 @@ function render(){
     <section class="panel ${currentTab==='beranda'?'active':''}">${renderBeranda(dLeft, allVendorList)}</section>
     <section class="panel ${currentTab==='timeline'?'active':''}">${renderTimeline()}</section>
     <section class="panel ${currentTab==='vendor'?'active':''}">${renderVendors()}</section>
-    <section class="panel ${currentTab==='pembayaran'?'active':''}">${renderPayments()}</section>
+    ${!isSupplier ? `<section class="panel ${currentTab==='pembayaran'?'active':''}">${renderPayments()}</section>` : ''}
     <section class="panel ${currentTab==='detail'?'active':''}">${renderDetailAcara()}</section>
     <section class="panel ${currentTab==='moodboard'?'active':''}">${renderMoodboard()}</section>
 
@@ -2160,14 +2198,14 @@ function renderBeranda(dLeft, allVendorList){
               <div class="req-item ${r.status}">
                 <div class="req-text">${escapeHtml(r.text)}</div>
                 <div class="req-meta">
-                  <span>${new Date(r.date).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} · ${r.by==='client'?'Klien':'Marketing'}${r.status==='done'?' · ✓ Selesai':''}</span>
+                  <span>${new Date(r.date).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} · ${r.by==='client'?'Klien':(r.by==='supplier'?escapeHtml(r.supplierKey||'Vendor'):'Marketing')}${r.status==='done'?' · ✓ Selesai':''}</span>
                   ${isVendor ? `<span class="row-actions"><button class="btn small" data-action="toggle-request" data-id="${r.id}">${r.status==='done'?'↺ Buka lagi':'✓ Tandai selesai'}</button><button class="btn small danger" data-action="delete-request" data-id="${r.id}">🗑️</button></span>` : ''}
                 </div>
               </div>
             `).join('') : `<div class="empty-mini">Belum ada catatan/request.</div>`}
           </div>
           <div class="add-inline">
-            <input id="requestInput" placeholder="${isVendor?'Tulis catatan/update buat klien...':'Tulis request atau pertanyaan buat marketing...'}"/>
+            <input id="requestInput" placeholder="${isVendor?'Tulis catatan/update buat klien...':(isSupplier?'Tulis catatan/update dari vendor kamu buat klien & marketing...':'Tulis request atau pertanyaan buat marketing...')}"/>
             <button class="mini-add-btn" id="addRequest" title="Kirim">+</button>
           </div>
         </div>
@@ -2300,6 +2338,7 @@ function renderVendorCard(key, v, opts){
         </div>` : ''}
       </div>
 
+      ${!isSupplier ? `
       <div class="subsection">
         <h4>➕ Add-Ons ${addonSum ? `<span class="addon-total-badge">· ${fmtIDR(addonSum)}</span>`:''}</h4>
         <div class="mini-list" data-addon-list>
@@ -2319,7 +2358,7 @@ function renderVendorCard(key, v, opts){
           <input data-addon-amount class="price" placeholder="Rp 0 / item"/>
           <button class="mini-add-btn" data-action="add-addon" title="Tambah add-on">+</button>
         </div>` : ''}
-      </div>
+      </div>` : ''}
     </div>
   `;
 }
@@ -2521,6 +2560,7 @@ function renderMoodboard(){
               </div>
             `).join('') : `<div class="empty-mini">Belum ada catatan.</div>`}
           </div>
+          ${!isSupplier ? `
           <div class="add-inline">
             <select id="moodNoteVendorSelect" style="flex:1;min-width:150px;padding:8px 10px;border-radius:10px;font-size:13px;">
               <option value="Umum">🗒️ Umum (semua vendor)</option>
@@ -2528,21 +2568,21 @@ function renderMoodboard(){
             </select>
             <input id="conceptInput" placeholder="Tulis konsep/catatan untuk vendor yang dipilih..."/>
             <button class="mini-add-btn" id="addMoodNote" title="Tambah">+</button>
-          </div>
+          </div>` : ''}
         </div>
         <div class="mb-card"><h3>🔗 Referensi (Pinterest, moodboard link, dll)</h3>
-          ${m.links.map((l,i)=>`<div class="ref-link" data-idx="${i}"><a href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.title || l.url)}</a><button class="btn small danger" data-action="delete-link">✕</button></div>`).join('') || `<div class="empty-mini">Belum ada link referensi.</div>`}
-          <div class="add-inline"><input id="refTitleInput" placeholder="Judul (opsional)"/><input id="refUrlInput" placeholder="https://..."/><button class="mini-add-btn" id="addRefLink" title="Tambah">+</button></div>
+          ${m.links.map((l,i)=>`<div class="ref-link" data-idx="${i}"><a href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.title || l.url)}</a>${!isSupplier ? `<button class="btn small danger" data-action="delete-link">✕</button>` : ''}</div>`).join('') || `<div class="empty-mini">Belum ada link referensi.</div>`}
+          ${!isSupplier ? `<div class="add-inline"><input id="refTitleInput" placeholder="Judul (opsional)"/><input id="refUrlInput" placeholder="https://..."/><button class="mini-add-btn" id="addRefLink" title="Tambah">+</button></div>` : ''}
         </div>
       </div>
       <div>
         <div class="mb-card"><h3>🏷️ Gaya / Tema</h3>
-          <div class="tags">${m.tags.map((t,i)=>`<span class="tag">${escapeHtml(t)} <button data-idx="${i}" data-action="delete-tag">✕</button></span>`).join('')}</div>
-          <div class="add-inline"><input id="tagInput" placeholder="Tambah tema, misal: Rustic Garden"/><button class="mini-add-btn" id="addTag" title="Tambah">+</button></div>
+          <div class="tags">${m.tags.map((t,i)=>`<span class="tag">${escapeHtml(t)} ${!isSupplier ? `<button data-idx="${i}" data-action="delete-tag">✕</button>` : ''}</span>`).join('')}</div>
+          ${!isSupplier ? `<div class="add-inline"><input id="tagInput" placeholder="Tambah tema, misal: Rustic Garden"/><button class="mini-add-btn" id="addTag" title="Tambah">+</button></div>` : ''}
         </div>
         <div class="mb-card"><h3>🎨 Palet Warna</h3>
-          <div class="swatches">${m.palette.map((c,i)=>`<div class="swatch" style="background:${escapeAttr(c)}"><button data-idx="${i}" data-action="delete-color">✕</button></div>`).join('')}</div>
-          <div class="add-inline"><input id="colorInput" type="text" placeholder="#7A1F2E"/><button class="mini-add-btn" id="addColor" title="Tambah">+</button></div>
+          <div class="swatches">${m.palette.map((c,i)=>`<div class="swatch" style="background:${escapeAttr(c)}">${!isSupplier ? `<button data-idx="${i}" data-action="delete-color">✕</button>` : ''}</div>`).join('')}</div>
+          ${!isSupplier ? `<div class="add-inline"><input id="colorInput" type="text" placeholder="#7A1F2E"/><button class="mini-add-btn" id="addColor" title="Tambah">+</button></div>` : ''}
         </div>
       </div>
     </div>
@@ -2633,8 +2673,10 @@ function attachHandlers(){
 
   const clientLogoutBtn = document.getElementById('clientLogoutBtn');
   if(clientLogoutBtn) clientLogoutBtn.addEventListener('click', ()=>{
-    roleDecided = false;
-    if(location.hash === '#client'){ showClientPasswordGate(); } else { showProjectGate(); }
+    roleDecided = false; isSupplier = false; supplierVendorKey = null;
+    if(location.hash === '#client'){ showClientPasswordGate(); }
+    else if(location.hash === '#vendor'){ showSupplierGate(); }
+    else { showProjectGate(); }
   });
 
   if(isVendor){
@@ -2642,6 +2684,10 @@ function attachHandlers(){
     if(copyVendor) copyVendor.addEventListener('click', ()=> copyText(document.getElementById('vendorLinkBox').value));
     const vlb = document.getElementById('vendorLinkBox');
     if(vlb) vlb.addEventListener('click', ()=> vlb.select());
+    const copySupplier = document.getElementById('copySupplierLink');
+    if(copySupplier) copySupplier.addEventListener('click', ()=> copyText(document.getElementById('supplierLinkBox').value));
+    const slb = document.getElementById('supplierLinkBox');
+    if(slb) slb.addEventListener('click', ()=> slb.select());
     const changeProjectCode = document.getElementById('changeProjectCode');
     if(changeProjectCode) changeProjectCode.addEventListener('click', async ()=>{
       const val = await customPrompt('Kode project baru (huruf, angka, - dan _ saja). Kode ini dipakai di link & login klien:', state.id);
@@ -2811,7 +2857,7 @@ function attachHandlers(){
   const doAddRequest = ()=>{
     const inp = document.getElementById('requestInput');
     const val = inp.value.trim();
-    if(val){ state.requests.push({id:uid('r'), text:val, by: isVendor?'vendor':'client', date:new Date().toISOString(), status:'open'}); scheduleSave(); render(); }
+    if(val){ state.requests.push({id:uid('r'), text:val, by: isSupplier?'supplier':(isVendor?'vendor':'client'), supplierKey: isSupplier ? supplierVendorKey : undefined, date:new Date().toISOString(), status:'open'}); scheduleSave(); render(); }
   };
   if(addRequest) addRequest.addEventListener('click', doAddRequest);
   const requestInputEl = document.getElementById('requestInput');
