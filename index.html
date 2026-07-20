@@ -1915,10 +1915,13 @@ function renderProjectDashboard(){
     document.querySelectorAll('[data-action="reassign-marketing"]').forEach(sel=> sel.addEventListener('change', async ()=>{
       const pid = sel.dataset.id;
       const newMid = sel.value || null;
+      sel.disabled = true;
+      showLoadingOverlay('Menyimpan penugasan marketing...');
       const idx = projectsIndex.find(p=>p.id===pid);
       if(idx){ idx.marketingId = newMid; await saveProjectsIndex(); }
       const proj = await loadProjectById(pid);
       if(proj){ proj.marketingId = newMid; await storageSetWithRetry(projectKey(pid), JSON.stringify(proj), true); }
+      hideLoadingOverlay();
       showToast('Marketing project diperbarui ✓');
       renderProjectDashboard();
     }));
