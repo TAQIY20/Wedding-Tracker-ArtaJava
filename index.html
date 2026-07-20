@@ -3339,9 +3339,11 @@ function attachHandlers(){
         const docType = btn.dataset.doctype;
         const docLabel = docType==='mou' ? 'MOU' : 'Rundown';
         if(await customConfirm(`Hapus lampiran ${docLabel} ini?`)){
+          showLoadingOverlay(`Menghapus lampiran ${docLabel}...`);
           state.documents[docType] = null;
           delete docFileCache[docType];
           try{ await storageDeleteChunked(docFileKey(state.id, docType), true); }catch(e){ /* kalau memang belum ada, abaikan */ }
+          hideLoadingOverlay();
           scheduleSave(); render();
         }
       });
@@ -3593,9 +3595,11 @@ function attachHandlers(){
     const delInvoiceBtn = el.querySelector('[data-action="delete-invoice"]');
     if(delInvoiceBtn) delInvoiceBtn.addEventListener('click', async ()=>{
       if(await customConfirm('Hapus lampiran invoice ini?')){
+        showLoadingOverlay('Menghapus lampiran invoice...');
         p.invoice = null;
         delete invoiceFileCache[id];
         try{ await storageDeleteChunked(invoiceFileKey(state.id, id), true); }catch(e){ /* kalau memang belum ada, abaikan */ }
+        hideLoadingOverlay();
         scheduleSave(); render();
       }
     });
