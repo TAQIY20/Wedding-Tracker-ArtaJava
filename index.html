@@ -1150,8 +1150,7 @@ async function storageSetChunkedWithRetry(baseKey, value, shared, onProgress){
   return metaOk;
 }
 let lastFetchError = '';
-async function storageGetChunked(baseKey, shared){
-  lastFetchError = '';
+async function storageGetChunkedOnce(baseKey, shared){
   try{
     const metaRes = await window.storage.get(baseKey + '_meta', shared);
     if(metaRes && metaRes.value){
@@ -1173,6 +1172,31 @@ async function storageGetChunked(baseKey, shared){
     if(legacyRes && legacyRes.value) return legacyRes.value;
   }catch(e){ lastFetchError = lastFetchError || (e && (e.message || String(e))) || 'unknown error saat ambil legacy key'; }
   return null;
+}
+async function storageGetChunked(baseKey, shared){
+  lastFetchError = '';
+  const val = await storageGetChunkedOnce(baseKey, shared);
+  if(val) return val;
+  // Fallback berjaga-jaga: kalau versi lama aplikasi pernah menyimpan file ini dengan
+  // shared flag yang kebalikannya (bug lama / migrasi), coba juga cek di sana sebelum
+  // benar-benar menyerah. Tidak merugikan kalau memang tidak ada — cuma tambahan usaha.
+  const fallbackVal = await storageGetChunkedOnce(baseKey, !shared);
+  if(fallbackVal){ console.warn('storageGetChunked: ketemu di shared flag kebalikannya untuk', baseKey); return fallbackVal; }
+  if(!lastFetchError) lastFetchError = `key "${baseKey}" benar-benar tidak ada di storage (sudah dicek shared:${shared} dan shared:${!shared})`;
+  return null;
+}
+// Verifikasi baca-ulang setelah upload, dengan retry+jeda. Ternyata storage bisa butuh
+// sepersekian detik untuk "settle" bahkan untuk baca-tulis berurutan dalam sesi yang sama —
+// tanpa retry ini, verifikasi malah jadi false alarm (nulisnya berhasil, tapi baca-ulang
+// langsung sesudahnya belum kebaca).
+async function verifyStoredChunked(baseKey, shared){
+  const VERIFY_RETRY_DELAYS_MS = [300, 900, 1800];
+  for(let i=0;i<VERIFY_RETRY_DELAYS_MS.length;i++){
+    await new Promise(r=> setTimeout(r, VERIFY_RETRY_DELAYS_MS[i]));
+    const val = await storageGetChunked(baseKey, shared).catch(()=>null);
+    if(val) return true;
+  }
+  return false;
 }
 async function storageDeleteChunked(baseKey, shared){
   try{
@@ -3333,8 +3357,8 @@ function attachHandlers(){
           // sebelum bilang "berhasil" ke vendor. Kalau ternyata tidak konsisten, vendor langsung
           // tahu saat itu juga — bukan klien yang baru nemuin masalah belakangan pas mau download.
           setLabelText('⏳ Memverifikasi...');
-          const verifyVal = await storageGetChunked(docFileKey(state.id, docType), true).catch(()=>null);
-          if(!verifyVal){
+          const verified = await verifyStoredChunked(docFileKey(state.id, docType), true);
+          if(!verified){
             await customAlert('⚠️ ' + docLabel + ' tersimpan, tapi gagal diverifikasi saat dibaca ulang.\n\nCoba upload ulang untuk memastikan file benar-benar tersimpan dengan baik.');
             setLabelText(originalLabelText);
             if(labelEl) labelEl.style.pointerEvents = '';
@@ -3617,8 +3641,8 @@ function attachHandlers(){
         }
         // Verifikasi baca-ulang sebelum bilang "berhasil", biar masalah ketahuan sekarang juga.
         setLabelText('⏳ Memverifikasi...');
-        const verifyVal = await storageGetChunked(invoiceFileKey(state.id, p.id), true).catch(()=>null);
-        if(!verifyVal){
+        const verified = await verifyStoredChunked(invoiceFileKey(state.id, p.id), true);
+        if(!verified){
           await customAlert('⚠️ Invoice tersimpan, tapi gagal diverifikasi saat dibaca ulang.\n\nCoba upload ulang untuk memastikan file benar-benar tersimpan dengan baik.');
           setLabelText(originalLabelText);
           if(label) label.style.pointerEvents = '';
