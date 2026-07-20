@@ -1122,7 +1122,7 @@ async function storageSetWithRetry(key, value, shared, retries){
    berurutan) supaya file besar tidak butuh waktu lama / terlihat seperti
    macet tanpa keterangan apa pun saat diunggah. */
 const STORAGE_CHUNK_SIZE = 43000;
-const STORAGE_CHUNK_CONCURRENCY = 6;
+const STORAGE_CHUNK_CONCURRENCY = 3;
 async function runWithConcurrency(taskFns, limit, onProgress){
   const results = new Array(taskFns.length);
   let nextIndex = 0, done = 0;
@@ -1185,18 +1185,21 @@ async function storageGetChunked(baseKey, shared){
   if(!lastFetchError) lastFetchError = `key "${baseKey}" benar-benar tidak ada di storage (sudah dicek shared:${shared} dan shared:${!shared})`;
   return null;
 }
-// Verifikasi baca-ulang setelah upload, dengan retry+jeda. Ternyata storage bisa butuh
-// sepersekian detik untuk "settle" bahkan untuk baca-tulis berurutan dalam sesi yang sama —
-// tanpa retry ini, verifikasi malah jadi false alarm (nulisnya berhasil, tapi baca-ulang
-// langsung sesudahnya belum kebaca).
-async function verifyStoredChunked(baseKey, shared){
-  const VERIFY_RETRY_DELAYS_MS = [300, 900, 1800];
+// Verifikasi baca-ulang setelah upload — versi BACKGROUND, dipanggil tanpa "await" oleh
+// pemanggilnya supaya tidak menghentikan alur vendor. Storage-nya ternyata butuh waktu
+// "settle" yang tidak konsisten (kadang <1 detik, kadang lebih dari beberapa detik), jadi
+// dikasih waktu tunggu jauh lebih panjang (sampai ±30 detik total) sebelum benar-benar
+// dianggap gagal. Kalau gagal, cuma toast kecil (tidak mengganggu, bukan popup nge-blok),
+// karena kemungkinan besar cuma soal lambat, bukan benar-benar hilang.
+async function verifyStoredChunkedBackground(baseKey, shared, label){
+  const VERIFY_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
   for(let i=0;i<VERIFY_RETRY_DELAYS_MS.length;i++){
     await new Promise(r=> setTimeout(r, VERIFY_RETRY_DELAYS_MS[i]));
     const val = await storageGetChunked(baseKey, shared).catch(()=>null);
-    if(val) return true;
+    if(val) return; // aman, tidak perlu kasih tahu apa-apa
   }
-  return false;
+  console.warn('verifyStoredChunkedBackground: gagal verifikasi setelah retry panjang untuk', baseKey);
+  showToast('⚠️ ' + label + ' mungkin belum tersimpan sempurna — kalau nanti klien lapor gagal download, coba upload ulang.', true);
 }
 async function storageDeleteChunked(baseKey, shared){
   try{
@@ -3353,22 +3356,18 @@ function attachHandlers(){
             e.target.value = '';
             return;
           }
-          // Verifikasi baca-ulang: pastikan filenya benar-benar bisa diambil kembali dari storage
-          // sebelum bilang "berhasil" ke vendor. Kalau ternyata tidak konsisten, vendor langsung
-          // tahu saat itu juga — bukan klien yang baru nemuin masalah belakangan pas mau download.
-          setLabelText('⏳ Memverifikasi...');
-          const verified = await verifyStoredChunked(docFileKey(state.id, docType), true);
-          if(!verified){
-            await customAlert('⚠️ ' + docLabel + ' tersimpan, tapi gagal diverifikasi saat dibaca ulang.\n\nCoba upload ulang untuk memastikan file benar-benar tersimpan dengan baik.');
-            setLabelText(originalLabelText);
-            if(labelEl) labelEl.style.pointerEvents = '';
-            e.target.value = '';
-            return;
-          }
+          // Langsung anggap berhasil dan lanjutkan alur vendor — JANGAN blokir dengan verifikasi
+          // sinkron di sini. Storage-nya ternyata butuh waktu "settle" yang tidak konsisten
+          // (kadang <1 detik, kadang lebih dari beberapa detik), jadi verifikasi sinkron malah
+          // jadi alarm palsu yang bikin vendor kena "gagal" padahal filenya baik-baik saja.
           docFileCache[docType] = dataUrl;
           state.documents[docType] = { name:file.name, type };
           showToast(docLabel + ' berhasil diunggah ✓');
           scheduleSave(); render();
+          // Verifikasi tetap jalan, tapi di BELAKANG LAYAR dengan waktu tunggu lebih panjang.
+          // Kalau memang betul-betul gagal (bukan cuma lagi lambat), kasih notifikasi kecil
+          // yang tidak menghentikan apa pun — vendor tetap bisa lanjut kerja.
+          verifyStoredChunkedBackground(docFileKey(state.id, docType), true, docLabel);
         }catch(err){
           await customAlert('Gagal memproses file ' + docLabel + ': ' + (err.message || err));
           setLabelText(originalLabelText);
@@ -3639,20 +3638,12 @@ function attachHandlers(){
           e.target.value = '';
           return;
         }
-        // Verifikasi baca-ulang sebelum bilang "berhasil", biar masalah ketahuan sekarang juga.
-        setLabelText('⏳ Memverifikasi...');
-        const verified = await verifyStoredChunked(invoiceFileKey(state.id, p.id), true);
-        if(!verified){
-          await customAlert('⚠️ Invoice tersimpan, tapi gagal diverifikasi saat dibaca ulang.\n\nCoba upload ulang untuk memastikan file benar-benar tersimpan dengan baik.');
-          setLabelText(originalLabelText);
-          if(label) label.style.pointerEvents = '';
-          e.target.value = '';
-          return;
-        }
+        // Langsung anggap berhasil dan lanjutkan alur vendor — verifikasi jalan di belakang layar.
         invoiceFileCache[p.id] = dataUrl;
         p.invoice = { name:file.name, type };
         showToast('Invoice berhasil diunggah ✓');
         scheduleSave(); render();
+        verifyStoredChunkedBackground(invoiceFileKey(state.id, p.id), true, 'Invoice');
       }catch(err){
         await customAlert('Gagal memproses file invoice: ' + (err.message || err));
         setLabelText(originalLabelText);
