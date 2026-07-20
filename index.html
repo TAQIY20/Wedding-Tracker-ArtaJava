@@ -1217,36 +1217,43 @@ function showToast(msg, isError, persistent){
 }
 
 /* Download lampiran (MOU/Rundown/Invoice) supaya benar-benar tersimpan sebagai file asli di penyimpanan HP,
-   bukan malah "membuka" data-URL sebagai halaman web (yang di beberapa browser bawaan HP/WebView suka salah
-   kaprah — hasil unduhannya jadi salinan halaman index.html itu sendiri, bukan file lampirannya).
-   Strategi: pakai Web Share API (native share-sheet Android/iOS, ada opsi "Simpan ke File/Downloads") sebagai
-   cara utama karena ini jalur OS langsung dan paling konsisten di semua browser/WebView. Kalau tidak didukung,
-   baru fallback ke download lewat Blob URL, dan kalau itu pun gagal, fallback terakhir buka tab baru. */
+   bukan malah "membuka"/menyimpan halaman web itu sendiri (bug lama: di beberapa browser bawaan HP/WebView,
+   fetch() atas data-URL yang berukuran besar bisa diam-diam gagal atau lambat sampai "user activation" dari
+   tap pengguna sudah keburu hangus — akibatnya window.open()/navigator.share() fallback ditolak browser dan
+   yang malah ke-download adalah halaman index.html/URL situsnya sendiri, bukan file lampirannya).
+   Strategi baru: konversi data-URL ke Blob secara SINKRON (atob, tanpa fetch — fetch() atas data: URI besar
+   inilah yang tidak reliable di beberapa WebView Android), lalu langsung unduh lewat Blob URL + <a download>
+   sebagai cara utama (ini yang benar-benar menyimpan ke folder Download HP dengan nama & tipe file yang
+   benar). Web Share API dipakai sebagai fallback kedua saja. TIDAK ADA lagi fallback window.open(dataUrl) —
+   itulah sumber bug "yang ke-download malah halaman webnya". */
+function dataUrlToBlob(dataUrl){
+  const commaIdx = dataUrl.indexOf(',');
+  if(commaIdx === -1) throw new Error('Format data URL tidak valid');
+  const header = dataUrl.slice(0, commaIdx);
+  const isBase64 = /;base64/i.test(header);
+  const mimeMatch = header.match(/^data:([^;]+)/i);
+  const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+  const rawData = dataUrl.slice(commaIdx + 1);
+  const binaryStr = isBase64 ? atob(rawData) : decodeURIComponent(rawData);
+  const len = binaryStr.length;
+  const bytes = new Uint8Array(len);
+  for(let i=0;i<len;i++){ bytes[i] = binaryStr.charCodeAt(i); }
+  return new Blob([bytes], { type: mime });
+}
+
 async function downloadDataUrl(dataUrl, filename){
   if(!dataUrl || dataUrl === '#'){ showToast('File belum siap, coba lagi sesaat lagi.', true); return; }
   filename = filename || 'file';
   let blob;
   try{
-    const res = await fetch(dataUrl);
-    blob = await res.blob();
+    blob = dataUrlToBlob(dataUrl);
   }catch(e){
-    console.error('downloadDataUrl: gagal ambil blob', e);
-    window.open(dataUrl, '_blank');
+    console.error('downloadDataUrl: gagal konversi data URL ke blob', e);
+    showToast('Gagal memproses file untuk diunduh. Coba lagi.', true);
     return;
   }
-  // Cara 1: Web Share API dengan file — muncul share-sheet asli Android/iOS lengkap dengan opsi
-  // "Simpan ke Files/Downloads", paling reliable di WebView/browser bawaan HP.
-  try{
-    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
-    if(navigator.canShare && navigator.canShare({ files: [file] })){
-      await navigator.share({ files: [file], title: filename });
-      return;
-    }
-  }catch(shareErr){
-    if(shareErr && shareErr.name === 'AbortError') return; // user membatalkan share, jangan lanjut fallback
-    console.warn('downloadDataUrl: share gagal, fallback ke download biasa', shareErr);
-  }
-  // Cara 2 (fallback): download lewat Blob URL sementara.
+  // Cara 1 (utama): unduh lewat Blob URL + <a download>. Ini jalur paling konsisten untuk benar-benar
+  // menyimpan file ke penyimpanan/folder Download HP dengan nama & ekstensi aslinya.
   try{
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1257,10 +1264,23 @@ async function downloadDataUrl(dataUrl, filename){
     a.click();
     a.remove();
     setTimeout(()=> URL.revokeObjectURL(blobUrl), 8000);
+    return;
   }catch(e){
-    console.error('downloadDataUrl: fallback blob gagal', e);
-    window.open(dataUrl, '_blank');
+    console.error('downloadDataUrl: blob-url download gagal', e);
   }
+  // Cara 2 (fallback): Web Share API — kalau blob-url tidak berhasil (browser/WebView tertentu yang membatasinya).
+  try{
+    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+    if(navigator.canShare && navigator.canShare({ files: [file] })){
+      await navigator.share({ files: [file], title: filename });
+      return;
+    }
+  }catch(shareErr){
+    if(shareErr && shareErr.name === 'AbortError') return; // user membatalkan share
+    console.warn('downloadDataUrl: share gagal', shareErr);
+  }
+  // Sengaja TIDAK ada fallback window.open(dataUrl) di sini — itu penyebab bug lama.
+  showToast('Gagal mengunduh file di browser ini. Coba pakai Chrome/Samsung Internet versi terbaru.', true);
 }
 
 /* ---------- CUSTOM MODAL (native confirm/prompt/alert are blocked inside the sandboxed artifact iframe, so we build our own) ---------- */
