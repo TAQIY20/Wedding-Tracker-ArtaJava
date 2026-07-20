@@ -1313,21 +1313,43 @@ async function downloadAttachmentSafely(cache, key, fetchFn, filename){
     downloadDataUrl(cache[key], filename);
     return;
   }
-  showToast('Menyiapkan file, mohon tunggu…', false, true);
-  try{
-    const val = await fetchFn();
-    hideToast();
-    if(val){
-      cache[key] = val;
-      downloadDataUrl(val, filename);
-    }else{
-      await customAlert('Gagal mengambil file dari storage.\n\nDetail teknis: ' + (lastFetchError || 'file tidak ditemukan / kosong (kemungkinan belum berhasil ke-upload, atau koneksi ke storage backend gagal).') + '\n\nCoba lagi, atau screenshot pesan ini untuk dilaporkan.');
+  const DOWNLOAD_RETRY_DELAYS_MS = [0, 900, 1800];
+  async function attempt(){
+    showToast('Menyiapkan file, mohon tunggu…', false, true);
+    try{
+      let val = null;
+      for(let i=0;i<DOWNLOAD_RETRY_DELAYS_MS.length;i++){
+        if(DOWNLOAD_RETRY_DELAYS_MS[i] > 0){
+          showToast(`Menyiapkan file, mencoba lagi (${i+1}/${DOWNLOAD_RETRY_DELAYS_MS.length})…`, false, true);
+          await new Promise(r=> setTimeout(r, DOWNLOAD_RETRY_DELAYS_MS[i]));
+        }
+        val = await fetchFn();
+        if(val) break;
+      }
+      hideToast();
+      if(val){
+        cache[key] = val;
+        downloadDataUrl(val, filename);
+        return;
+      }
+      // Sudah dicoba beberapa kali dan tetap gagal — kasih pilihan "Coba Lagi" biar user
+      // tidak perlu klik ulang tombol lampirannya dari awal, cukup tap sekali lagi di sini.
+      const retry = await customModal({
+        message: 'Gagal mengambil file dari storage.\n\nDetail teknis: ' + (lastFetchError || 'file tidak ditemukan / kosong (kemungkinan belum berhasil ke-upload, atau koneksi ke storage backend gagal).') + '\n\nSudah dicoba beberapa kali. Ini bisa terjadi kalau lampiran baru saja diupload dan belum sempat tersinkron ke perangkat ini.',
+        okText: 'Coba Lagi', cancelText: 'Tutup'
+      });
+      if(retry) await attempt();
+    }catch(e){
+      hideToast();
+      console.error('downloadAttachmentSafely: gagal ambil file', e);
+      const retry = await customModal({
+        message: 'Gagal mengambil file.\n\nDetail teknis: ' + (e && (e.message || String(e))) + '\n\nCoba lagi, atau screenshot pesan ini untuk dilaporkan.',
+        okText: 'Coba Lagi', cancelText: 'Tutup'
+      });
+      if(retry) await attempt();
     }
-  }catch(e){
-    hideToast();
-    console.error('downloadAttachmentSafely: gagal ambil file', e);
-    await customAlert('Gagal mengambil file.\n\nDetail teknis: ' + (e && (e.message || String(e))) + '\n\nCoba lagi, atau screenshot pesan ini untuk dilaporkan.');
   }
+  await attempt();
 }
 
 /* ---------- CUSTOM MODAL (native confirm/prompt/alert are blocked inside the sandboxed artifact iframe, so we build our own) ---------- */
@@ -3307,6 +3329,18 @@ function attachHandlers(){
             e.target.value = '';
             return;
           }
+          // Verifikasi baca-ulang: pastikan filenya benar-benar bisa diambil kembali dari storage
+          // sebelum bilang "berhasil" ke vendor. Kalau ternyata tidak konsisten, vendor langsung
+          // tahu saat itu juga — bukan klien yang baru nemuin masalah belakangan pas mau download.
+          setLabelText('⏳ Memverifikasi...');
+          const verifyVal = await storageGetChunked(docFileKey(state.id, docType), true).catch(()=>null);
+          if(!verifyVal){
+            await customAlert('⚠️ ' + docLabel + ' tersimpan, tapi gagal diverifikasi saat dibaca ulang.\n\nCoba upload ulang untuk memastikan file benar-benar tersimpan dengan baik.');
+            setLabelText(originalLabelText);
+            if(labelEl) labelEl.style.pointerEvents = '';
+            e.target.value = '';
+            return;
+          }
           docFileCache[docType] = dataUrl;
           state.documents[docType] = { name:file.name, type };
           showToast(docLabel + ' berhasil diunggah ✓');
@@ -3576,6 +3610,16 @@ function attachHandlers(){
         });
         if(!ok){
           await customAlert('Gagal menyimpan invoice ke storage.\n\nDetail: ' + (lastStorageError || 'tidak diketahui'));
+          setLabelText(originalLabelText);
+          if(label) label.style.pointerEvents = '';
+          e.target.value = '';
+          return;
+        }
+        // Verifikasi baca-ulang sebelum bilang "berhasil", biar masalah ketahuan sekarang juga.
+        setLabelText('⏳ Memverifikasi...');
+        const verifyVal = await storageGetChunked(invoiceFileKey(state.id, p.id), true).catch(()=>null);
+        if(!verifyVal){
+          await customAlert('⚠️ Invoice tersimpan, tapi gagal diverifikasi saat dibaca ulang.\n\nCoba upload ulang untuk memastikan file benar-benar tersimpan dengan baik.');
           setLabelText(originalLabelText);
           if(label) label.style.pointerEvents = '';
           e.target.value = '';
