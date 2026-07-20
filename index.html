@@ -2542,7 +2542,7 @@ function renderBeranda(dLeft, allVendorList){
           <label style="font-size:11.5px;color:var(--cream-dimmer);display:block;margin-bottom:6px;">MOU</label>
           <div class="p-invoice">
             ${state.documents.mou ? `
-              <a class="invoice-chip" href="javascript:void(0)" data-action="download-doc" data-doctype="mou" rel="noopener">📎 ${escapeHtml(state.documents.mou.name)}</a>
+              <a class="invoice-chip" href="${docFileCache.mou || '#'}" download="${escapeAttr(state.documents.mou.name)}" data-action="download-doc" data-doctype="mou" rel="noopener">📎 ${escapeHtml(state.documents.mou.name)}</a>
               ${isVendor ? `<button class="mi-del" data-action="delete-doc" data-doctype="mou" title="Hapus MOU">✕</button>` : ''}
             ` : (isVendor ? `
               <label class="invoice-upload-btn" id="docUploadLabel_mou">📎 Lampirkan MOU<input type="file" accept="image/*,application/pdf" data-action="upload-doc" data-doctype="mou" hidden/></label>
@@ -2555,7 +2555,7 @@ function renderBeranda(dLeft, allVendorList){
           <label style="font-size:11.5px;color:var(--cream-dimmer);display:block;margin-bottom:6px;">Rundown Acara</label>
           <div class="p-invoice">
             ${state.documents.rundown ? `
-              <a class="invoice-chip" href="javascript:void(0)" data-action="download-doc" data-doctype="rundown" rel="noopener">📎 ${escapeHtml(state.documents.rundown.name)}</a>
+              <a class="invoice-chip" href="${docFileCache.rundown || '#'}" download="${escapeAttr(state.documents.rundown.name)}" data-action="download-doc" data-doctype="rundown" rel="noopener">📎 ${escapeHtml(state.documents.rundown.name)}</a>
               ${isVendor ? `<button class="mi-del" data-action="delete-doc" data-doctype="rundown" title="Hapus Rundown">✕</button>` : ''}
             ` : (isVendor ? `
               <label class="invoice-upload-btn" id="docUploadLabel_rundown">📎 Lampirkan Rundown<input type="file" accept="image/*,application/pdf" data-action="upload-doc" data-doctype="rundown" hidden/></label>
@@ -2853,7 +2853,7 @@ function renderPayments(){
             <div class="p-due">🗓️ Jatuh tempo: <input type="date" data-field="dueDate" value="${p.dueDate}" ${isVendor?'':'disabled'}/></div>
             <div class="p-invoice">
               ${p.invoice ? `
-                <a class="invoice-chip" href="javascript:void(0)" data-action="download-invoice" data-payment-id="${p.id}" data-filename="${escapeAttr(p.invoice.name)}" rel="noopener">📎 ${escapeHtml(p.invoice.name)}</a>
+                <a class="invoice-chip" href="${invoiceFileCache[p.id] || '#'}" download="${escapeAttr(p.invoice.name)}" data-action="download-invoice" data-payment-id="${p.id}" data-filename="${escapeAttr(p.invoice.name)}" rel="noopener">📎 ${escapeHtml(p.invoice.name)}</a>
                 ${isVendor ? `<button class="mi-del" data-action="delete-invoice" title="Hapus lampiran invoice">✕</button>` : ''}
               ` : (isVendor ? `
                 <label class="invoice-upload-btn" id="invoiceUploadLabel_${p.id}">📎 Lampirkan Invoice<input type="file" accept="image/*,application/pdf" data-action="upload-invoice" hidden/></label>
@@ -3232,10 +3232,11 @@ function attachHandlers(){
     });
 
     document.querySelectorAll('[data-action="download-doc"]').forEach(a=>{
-      a.addEventListener('click', ()=>{
+      a.addEventListener('click', e=>{
         const docType = a.dataset.doctype;
         const doc = state.documents[docType];
-        if(!doc) return;
+        if(!doc || !docFileCache[docType]) return; // biarkan browser pakai href asli (fallback) kalau file belum ke-cache
+        e.preventDefault();
         downloadDataUrl(docFileCache[docType], doc.name);
       });
     });
@@ -3429,7 +3430,9 @@ function attachHandlers(){
     const toggle = el.querySelector('[data-action="toggle-paid"]');
     if(toggle) toggle.addEventListener('click', ()=>{ p.status = p.status==='paid'?'unpaid':'paid'; scheduleSave(); render(); });
     const downloadInvoiceLink = el.querySelector('[data-action="download-invoice"]');
-    if(downloadInvoiceLink) downloadInvoiceLink.addEventListener('click', ()=>{
+    if(downloadInvoiceLink) downloadInvoiceLink.addEventListener('click', e=>{
+      if(!invoiceFileCache[id]) return; // biarkan browser pakai href asli (fallback) kalau file belum ke-cache
+      e.preventDefault();
       downloadDataUrl(invoiceFileCache[id], downloadInvoiceLink.dataset.filename || (p.invoice && p.invoice.name));
     });
     const delBtn = el.querySelector('[data-action="delete-payment"]');
