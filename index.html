@@ -1316,13 +1316,26 @@ async function persist(){
     showToast('⚠️ Gagal menyimpan — cek koneksi & coba edit lagi', true);
   }
 }
+// PENTING (perbaikan bug "toast saling menutup"): elemen #toast cuma SATU dan dipakai bersama
+// oleh banyak proses async yang bisa tumpang-tindih (download invoice, download rundown/mou,
+// cek status, dst). Sebelumnya hideToast() dipanggil tanpa penanda "punya siapa", jadi proses A
+// yang lebih dulu selesai bisa menutup toast milik proses B yang masih berjalan (toast keliatan
+// "muncul lalu langsung hilang" padahal file B belum selesai diambil, atau sebaliknya B kelihatan
+// macet karena tokennya sudah "dicuri" A). Sekarang setiap showToast() mendapat token unik
+// (toastSeq) yang disimpan di elemen; hideToast() hanya benar-benar menutup toast kalau tokennya
+// masih yang terbaru (atau dipanggil tanpa token = paksa tutup, dipakai di alur yang memang selalu
+// satu per satu).
+let toastSeq = 0;
 function showToast(msg, isError, persistent){
   const t = document.getElementById('toast');
+  const mySeq = ++toastSeq;
+  t.dataset.seq = String(mySeq);
   t.textContent = msg; t.classList.add('show');
   t.classList.toggle('error', !!isError);
   t.classList.toggle('saving', !!persistent);
   clearTimeout(t._h);
-  if(!persistent) t._h = setTimeout(()=>t.classList.remove('show'), isError ? 3200 : 1600);
+  if(!persistent) t._h = setTimeout(()=>{ if(t.dataset.seq === String(mySeq)) t.classList.remove('show'); }, isError ? 3200 : 1600);
+  return mySeq;
 }
 
 /* Download lampiran (MOU/Rundown/Invoice) supaya benar-benar tersimpan sebagai file asli di penyimpanan HP,
@@ -1402,8 +1415,12 @@ async function downloadDataUrl(dataUrl, filename){
    bukan PDF), dan saat dibuka ya cuma nampilin aplikasi webnya lagi ("Memuat data...").
    Perbaikan: SELALU preventDefault(), lalu kalau belum ke-cache, ambil filenya on-demand langsung dari
    storage (fungsi di bawah) sebelum download — jangan pernah biarkan href asli '#' dieksekusi browser. */
-function hideToast(){
+function hideToast(seq){
   const t = document.getElementById('toast');
+  // Kalau pemanggil kasih token (seq) dan toast SUDAH DIPAKAI proses lain yang lebih baru
+  // (dataset.seq beda), jangan sentuh apa-apa — biar proses yang baru itu yang berhak
+  // menutup toastnya sendiri nanti. Ini yang mencegah proses A menutup toast proses B.
+  if(seq != null && t.dataset.seq !== String(seq)) return;
   clearTimeout(t._h);
   t.classList.remove('show');
   // PENTING: class 'saving' bikin animasi CSS (toastPulse) yang mengatur opacity sendiri —
@@ -1414,31 +1431,47 @@ function hideToast(){
   t.classList.remove('saving');
   t.classList.remove('error');
 }
+// Bungkus sebuah promise dengan batas waktu. PENTING (perbaikan bug "macet selamanya di
+// Menyiapkan file, mohon tunggu..."): sebelumnya fetchFn() (ambil file dari storage) di-await
+// TANPA batas waktu sama sekali. Kalau koneksi ke storage backend nyendat/hang — misalnya lagi
+// sibuk tepat setelah ada download besar sebelumnya — promise itu tidak pernah resolve ATAU
+// reject, jadi loop retry di attempt() nyangkut selamanya nunggu, dan toast persistent-nya
+// (yang memang sengaja tidak auto-hilang) jadi kelihatan macet permanen. Dengan withTimeout,
+// kalau storage tidak merespons dalam waktu wajar, prosesnya dipaksa gagal supaya masuk ke
+// jalur retry/modal "Coba Lagi" yang sudah ada, bukan diam membisu selamanya.
+function withTimeout(promise, ms, timeoutMsg){
+  let timer;
+  const timeout = new Promise((_, reject)=>{
+    timer = setTimeout(()=> reject(new Error(timeoutMsg || `Storage tidak merespons dalam ${Math.round(ms/1000)} detik.`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(()=> clearTimeout(timer));
+}
 async function downloadAttachmentSafely(cache, key, fetchFn, filename){
   filename = filename || 'file';
   if(cache[key]){
     // Filenya sudah "siap sedia" di cache (misal dari proses hydrate otomatis di background),
     // jadi bisa langsung diunduh — tapi tetap kasih toast sekilas biar user selalu dapat tanda
     // visual yang konsisten setiap kali klik download, bukan cuma pas file belum ke-cache.
-    showToast('Menyiapkan file…', false, true);
+    const seq = showToast('Menyiapkan file…', false, true);
     downloadDataUrl(cache[key], filename);
-    setTimeout(hideToast, 400);
+    setTimeout(()=> hideToast(seq), 400);
     return;
   }
   const DOWNLOAD_RETRY_DELAYS_MS = [0, 900, 1800];
+  const FETCH_TIMEOUT_MS = 20000; // 20 detik — lebih dari cukup untuk chunk normal, tapi tidak selamanya
   async function attempt(){
-    showToast('Menyiapkan file, mohon tunggu…', false, true);
+    let seq = showToast('Menyiapkan file, mohon tunggu…', false, true);
     try{
       let val = null;
       for(let i=0;i<DOWNLOAD_RETRY_DELAYS_MS.length;i++){
         if(DOWNLOAD_RETRY_DELAYS_MS[i] > 0){
-          showToast(`Menyiapkan file, mencoba lagi (${i+1}/${DOWNLOAD_RETRY_DELAYS_MS.length})…`, false, true);
+          seq = showToast(`Menyiapkan file, mencoba lagi (${i+1}/${DOWNLOAD_RETRY_DELAYS_MS.length})…`, false, true);
           await new Promise(r=> setTimeout(r, DOWNLOAD_RETRY_DELAYS_MS[i]));
         }
-        val = await fetchFn();
+        val = await withTimeout(fetchFn(), FETCH_TIMEOUT_MS);
         if(val) break;
       }
-      hideToast();
+      hideToast(seq);
       if(val){
         cache[key] = val;
         downloadDataUrl(val, filename);
@@ -1452,7 +1485,7 @@ async function downloadAttachmentSafely(cache, key, fetchFn, filename){
       });
       if(retry) await attempt();
     }catch(e){
-      hideToast();
+      hideToast(seq);
       console.error('downloadAttachmentSafely: gagal ambil file', e);
       const retry = await customModal({
         message: 'Gagal mengambil file.\n\nDetail teknis: ' + (e && (e.message || String(e))) + '\n\nCoba lagi, atau screenshot pesan ini untuk dilaporkan.',
@@ -3468,14 +3501,28 @@ function attachHandlers(){
     document.querySelectorAll('[data-action="download-doc"]').forEach(a=>{
       a.addEventListener('click', e=>{
         e.preventDefault(); // SELALU dicegah — jangan pernah biarkan browser pakai href='#' (lihat catatan di downloadAttachmentSafely)
-        const docType = a.dataset.doctype;
-        const doc = state.documents[docType];
-        if(!doc) return;
-        const pid = state.id;
-        downloadAttachmentSafely(docFileCache, docType, async ()=>{
-          const val = await storageGetChunked(docFileKey(pid, docType), true);
-          return val;
-        }, doc.name);
+        try{
+          const docType = a.dataset.doctype;
+          const doc = state.documents[docType];
+          // PENTING (perbaikan bug "klik tidak ada reaksi sama sekali"): sebelumnya kalau `doc`
+          // ternyata kosong di sini, kode langsung `return` tanpa kasih tahu apa-apa ke user —
+          // dari sudut pandang user itu keliatan seperti tombolnya benar-benar mati/diam,
+          // padahal harusnya selalu ada tanda visual (toast) setiap kali tombol ini diklik.
+          if(!doc){
+            showToast('Lampiran belum tersedia, coba refresh halaman.', true);
+            return;
+          }
+          const pid = state.id;
+          downloadAttachmentSafely(docFileCache, docType, async ()=>{
+            const val = await storageGetChunked(docFileKey(pid, docType), true);
+            return val;
+          }, doc.name);
+        }catch(err){
+          // Jaring pengaman terakhir: apa pun yang gagal secara tak terduga di sini, jangan
+          // sampai user hanya melihat klik yang diam tanpa respons — selalu tampilkan sesuatu.
+          console.error('download-doc click: gagal tak terduga', err);
+          showToast('Gagal memproses klik download. Coba lagi.', true);
+        }
       });
     });
 
@@ -3485,9 +3532,9 @@ function attachHandlers(){
         const docLabel = btn.dataset.doclabel || docType;
         const pid = state.id;
         btn.disabled = true;
-        showToast(`Mengecek status ${docLabel}...`, false, true);
-        const val = await storageGetChunked(docFileKey(pid, docType), true).catch(()=>null);
-        hideToast();
+        const seq = showToast(`Mengecek status ${docLabel}...`, false, true);
+        const val = await withTimeout(storageGetChunked(docFileKey(pid, docType), true), 20000).catch(()=>null);
+        hideToast(seq);
         btn.disabled = false;
         if(val){
           docFileCache[docType] = val; // sekalian isi cache biar download berikutnya instan
@@ -3691,20 +3738,25 @@ function attachHandlers(){
     const downloadInvoiceLink = el.querySelector('[data-action="download-invoice"]');
     if(downloadInvoiceLink) downloadInvoiceLink.addEventListener('click', e=>{
       e.preventDefault(); // SELALU dicegah — jangan pernah biarkan browser pakai href='#' (lihat catatan di downloadAttachmentSafely)
-      const pid = state.id;
-      const filename = downloadInvoiceLink.dataset.filename || (p.invoice && p.invoice.name);
-      downloadAttachmentSafely(invoiceFileCache, id, async ()=>{
-        const val = await storageGetChunked(invoiceFileKey(pid, id), true);
-        return val;
-      }, filename);
+      try{
+        const pid = state.id;
+        const filename = downloadInvoiceLink.dataset.filename || (p.invoice && p.invoice.name);
+        downloadAttachmentSafely(invoiceFileCache, id, async ()=>{
+          const val = await storageGetChunked(invoiceFileKey(pid, id), true);
+          return val;
+        }, filename);
+      }catch(err){
+        console.error('download-invoice click: gagal tak terduga', err);
+        showToast('Gagal memproses klik download. Coba lagi.', true);
+      }
     });
     const checkInvoiceStatusBtn = el.querySelector('[data-action="check-invoice-status"]');
     if(checkInvoiceStatusBtn) checkInvoiceStatusBtn.addEventListener('click', async ()=>{
       const pid = state.id;
       checkInvoiceStatusBtn.disabled = true;
-      showToast('Mengecek status invoice...', false, true);
-      const val = await storageGetChunked(invoiceFileKey(pid, id), true).catch(()=>null);
-      hideToast();
+      const seq = showToast('Mengecek status invoice...', false, true);
+      const val = await withTimeout(storageGetChunked(invoiceFileKey(pid, id), true), 20000).catch(()=>null);
+      hideToast(seq);
       checkInvoiceStatusBtn.disabled = false;
       if(val){
         invoiceFileCache[id] = val; // sekalian isi cache biar download berikutnya instan
