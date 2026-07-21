@@ -1121,7 +1121,7 @@ async function storageSetWithRetry(key, value, shared, retries){
    Chunk-chunk ini dikirim BERBARENGAN (beberapa sekaligus, bukan satu-satu
    berurutan) supaya file besar tidak butuh waktu lama / terlihat seperti
    macet tanpa keterangan apa pun saat diunggah. */
-const STORAGE_CHUNK_SIZE = 43000;
+const STORAGE_CHUNK_SIZE = 20000;
 const STORAGE_CHUNK_CONCURRENCY = 3;
 async function runWithConcurrency(taskFns, limit, onProgress){
   const results = new Array(taskFns.length);
@@ -1139,17 +1139,38 @@ async function runWithConcurrency(taskFns, limit, onProgress){
 }
 async function storageSetChunkedWithRetry(baseKey, value, shared, onProgress){
   const newChunkCount = Math.max(1, Math.ceil(value.length / STORAGE_CHUNK_SIZE));
+  const chunkParts = [];
   const tasks = [];
   for(let i=0;i<newChunkCount;i++){
     const part = value.slice(i*STORAGE_CHUNK_SIZE, (i+1)*STORAGE_CHUNK_SIZE);
+    chunkParts.push(part);
     tasks.push(()=> storageSetWithRetry(baseKey + '_c' + i, part, shared));
   }
   const results = await runWithConcurrency(tasks, STORAGE_CHUNK_CONCURRENCY, onProgress);
   if(results.some(ok=>!ok)) return false;
-  const metaOk = await storageSetWithRetry(baseKey + '_meta', JSON.stringify({chunks:newChunkCount}), shared);
+  // Simpan juga panjang tiap chunk (dan panjang total) di meta, supaya waktu dibaca ulang
+  // kita bisa DETEKSI kalau ada chunk yang kesimpan korup/kepotong (bukan cuma "ada/tidak").
+  const metaOk = await storageSetWithRetry(baseKey + '_meta', JSON.stringify({chunks:newChunkCount, lengths: chunkParts.map(p=>p.length), totalLength: value.length}), shared);
   return metaOk;
 }
 let lastFetchError = '';
+async function fetchChunkWithIntegrityRetry(chunkKey, expectedLength, shared){
+  // Beberapa kali percobaan: kalau chunk yang diambil ternyata panjangnya tidak cocok
+  // dengan yang tercatat di meta waktu upload, kemungkinan besar itu korup/kepotong —
+  // coba ambil ulang beberapa kali (dengan jeda kecil) sebelum benar-benar menyerah.
+  for(let attempt=0; attempt<3; attempt++){
+    if(attempt>0) await new Promise(r=> setTimeout(r, 400*attempt));
+    try{
+      const res = await window.storage.get(chunkKey, shared);
+      const val = (res && res.value) || '';
+      if(expectedLength == null || val.length === expectedLength) return val;
+      lastFetchError = `${chunkKey}: panjang tidak cocok (dapat ${val.length}, harusnya ${expectedLength})`;
+    }catch(err){
+      lastFetchError = `${chunkKey}: ` + (err && (err.message || String(err)));
+    }
+  }
+  return null; // tetap gagal setelah beberapa kali coba
+}
 async function storageGetChunkedOnce(baseKey, shared){
   try{
     const metaRes = await window.storage.get(baseKey + '_meta', shared);
@@ -1157,13 +1178,30 @@ async function storageGetChunkedOnce(baseKey, shared){
       const meta = JSON.parse(metaRes.value);
       let missingChunk = false;
       const parts = await Promise.all(Array.from({length: meta.chunks}, (_,i)=>
-        window.storage.get(baseKey + '_c' + i, shared).catch(err=>{ missingChunk = true; lastFetchError = 'chunk ' + i + ': ' + (err && (err.message||String(err))); return null; })
+        fetchChunkWithIntegrityRetry(baseKey + '_c' + i, meta.lengths ? meta.lengths[i] : null, shared).then(v=>{
+          if(v===null) missingChunk = true;
+          return v;
+        })
       ));
       if(missingChunk){
-        console.error('storageGetChunked: ada chunk yang gagal diambil untuk', baseKey, lastFetchError);
-        return null; // jangan kembalikan data korup (chunk hilang diganti string kosong)
+        console.error('storageGetChunked: ada chunk yang gagal/korup untuk', baseKey, lastFetchError);
+        return null; // jangan kembalikan data korup (chunk hilang/rusak diganti string kosong)
       }
-      return parts.map(p=> (p && p.value) || '').join('');
+      const joined = parts.join('');
+      // Sanity check terakhir: hasil gabungannya harus benar-benar berupa data-URL yang valid
+      // (ada 'data:' di depan dan koma pemisah header/isi), dan kalau meta punya totalLength,
+      // panjangnya juga harus pas. Kalau tidak, anggap gagal daripada kasih data korup ke pemanggil.
+      if(!/^data:/i.test(joined) || joined.indexOf(',') === -1){
+        lastFetchError = 'hasil gabungan bukan data-URL yang valid (kemungkinan ada chunk korup)';
+        console.error('storageGetChunked:', lastFetchError, 'untuk', baseKey);
+        return null;
+      }
+      if(meta.totalLength != null && joined.length !== meta.totalLength){
+        lastFetchError = `panjang total tidak cocok (dapat ${joined.length}, harusnya ${meta.totalLength})`;
+        console.error('storageGetChunked:', lastFetchError, 'untuk', baseKey);
+        return null;
+      }
+      return joined;
     }
   }catch(e){ lastFetchError = e && (e.message || String(e)) || 'unknown error saat ambil meta'; console.error('storageGetChunked: gagal ambil meta untuk', baseKey, e); }
   // Fallback: invoice lama yang disimpan sebagai satu key polos (belum sempat kena batas ukuran).
@@ -2681,6 +2719,7 @@ function renderBeranda(dLeft, allVendorList){
           <div class="p-invoice">
             ${state.documents.mou ? `
               <a class="invoice-chip" href="${docFileCache.mou || 'javascript:void(0)'}" download="${escapeAttr(state.documents.mou.name)}" data-action="download-doc" data-doctype="mou" rel="noopener">📎 ${escapeHtml(state.documents.mou.name)}</a>
+              ${isVendor ? `<button class="mi-del" data-action="check-doc-status" data-doctype="mou" data-doclabel="MOU" title="Cek status upload">🔍</button>` : ''}
               ${isVendor ? `<button class="mi-del" data-action="delete-doc" data-doctype="mou" title="Hapus MOU">✕</button>` : ''}
             ` : (isVendor ? `
               <label class="invoice-upload-btn" id="docUploadLabel_mou">📎 Lampirkan MOU<input type="file" accept="image/*,application/pdf" data-action="upload-doc" data-doctype="mou" hidden/></label>
@@ -2694,6 +2733,7 @@ function renderBeranda(dLeft, allVendorList){
           <div class="p-invoice">
             ${state.documents.rundown ? `
               <a class="invoice-chip" href="${docFileCache.rundown || 'javascript:void(0)'}" download="${escapeAttr(state.documents.rundown.name)}" data-action="download-doc" data-doctype="rundown" rel="noopener">📎 ${escapeHtml(state.documents.rundown.name)}</a>
+              ${isVendor ? `<button class="mi-del" data-action="check-doc-status" data-doctype="rundown" data-doclabel="Rundown" title="Cek status upload">🔍</button>` : ''}
               ${isVendor ? `<button class="mi-del" data-action="delete-doc" data-doctype="rundown" title="Hapus Rundown">✕</button>` : ''}
             ` : (isVendor ? `
               <label class="invoice-upload-btn" id="docUploadLabel_rundown">📎 Lampirkan Rundown<input type="file" accept="image/*,application/pdf" data-action="upload-doc" data-doctype="rundown" hidden/></label>
@@ -2992,6 +3032,7 @@ function renderPayments(){
             <div class="p-invoice">
               ${p.invoice ? `
                 <a class="invoice-chip" href="${invoiceFileCache[p.id] || 'javascript:void(0)'}" download="${escapeAttr(p.invoice.name)}" data-action="download-invoice" data-payment-id="${p.id}" data-filename="${escapeAttr(p.invoice.name)}" rel="noopener">📎 ${escapeHtml(p.invoice.name)}</a>
+                ${isVendor ? `<button class="mi-del" data-action="check-invoice-status" data-payment-id="${p.id}" title="Cek status upload">🔍</button>` : ''}
                 ${isVendor ? `<button class="mi-del" data-action="delete-invoice" title="Hapus lampiran invoice">✕</button>` : ''}
               ` : (isVendor ? `
                 <label class="invoice-upload-btn" id="invoiceUploadLabel_${p.id}">📎 Lampirkan Invoice<input type="file" accept="image/*,application/pdf" data-action="upload-invoice" hidden/></label>
@@ -3391,6 +3432,25 @@ function attachHandlers(){
       });
     });
 
+    document.querySelectorAll('[data-action="check-doc-status"]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const docType = btn.dataset.doctype;
+        const docLabel = btn.dataset.doclabel || docType;
+        const pid = state.id;
+        btn.disabled = true;
+        showToast(`Mengecek status ${docLabel}...`, false, true);
+        const val = await storageGetChunked(docFileKey(pid, docType), true).catch(()=>null);
+        hideToast();
+        btn.disabled = false;
+        if(val){
+          docFileCache[docType] = val; // sekalian isi cache biar download berikutnya instan
+          await customAlert(`✅ ${docLabel} sudah tersimpan lengkap dan siap dibagikan ke klien.`);
+        }else{
+          await customAlert(`⚠️ ${docLabel} belum bisa diverifikasi (belum sempat "settle" di storage).\n\nTunggu sebentar lalu cek lagi. Kalau setelah beberapa menit masih begini, coba hapus dan upload ulang.`);
+        }
+      });
+    });
+
     document.querySelectorAll('[data-action="delete-doc"]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const docType = btn.dataset.doctype;
@@ -3590,6 +3650,21 @@ function attachHandlers(){
         const val = await storageGetChunked(invoiceFileKey(pid, id), true);
         return val;
       }, filename);
+    });
+    const checkInvoiceStatusBtn = el.querySelector('[data-action="check-invoice-status"]');
+    if(checkInvoiceStatusBtn) checkInvoiceStatusBtn.addEventListener('click', async ()=>{
+      const pid = state.id;
+      checkInvoiceStatusBtn.disabled = true;
+      showToast('Mengecek status invoice...', false, true);
+      const val = await storageGetChunked(invoiceFileKey(pid, id), true).catch(()=>null);
+      hideToast();
+      checkInvoiceStatusBtn.disabled = false;
+      if(val){
+        invoiceFileCache[id] = val; // sekalian isi cache biar download berikutnya instan
+        await customAlert('✅ Invoice sudah tersimpan lengkap dan siap dibagikan ke klien.');
+      }else{
+        await customAlert('⚠️ Invoice belum bisa diverifikasi (belum sempat "settle" di storage).\n\nTunggu sebentar lalu cek lagi. Kalau setelah beberapa menit masih begini, coba hapus dan upload ulang.');
+      }
     });
     const delBtn = el.querySelector('[data-action="delete-payment"]');
     if(delBtn) delBtn.addEventListener('click', async ()=>{ if(await customConfirm('Hapus item pembayaran ini?')){ state.payments = state.payments.filter(x=>x.id!==id); scheduleSave(); render(); } });
