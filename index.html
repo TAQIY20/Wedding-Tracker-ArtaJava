@@ -1101,11 +1101,11 @@ function scheduleSave(){
 }
 let lastStorageError = '';
 async function storageSetWithRetry(key, value, shared, retries){
-  retries = retries==null ? 2 : retries;
+  retries = retries==null ? 4 : retries;
   let lastErr;
   for(let i=0;i<=retries;i++){
     try{ await window.storage.set(key, value, shared); lastStorageError = ''; return true; }
-    catch(e){ lastErr = e; if(i<retries) await new Promise(r=>setTimeout(r, 600*(i+1))); }
+    catch(e){ lastErr = e; if(i<retries) await new Promise(r=>setTimeout(r, 500*(i+1))); }
   }
   lastStorageError = (lastErr && (lastErr.message || String(lastErr))) || 'Unknown error';
   console.error('storage set failed after retries', lastErr);
@@ -1157,9 +1157,12 @@ let lastFetchError = '';
 async function fetchChunkWithIntegrityRetry(chunkKey, expectedLength, shared){
   // Beberapa kali percobaan: kalau chunk yang diambil ternyata panjangnya tidak cocok
   // dengan yang tercatat di meta waktu upload, kemungkinan besar itu korup/kepotong —
-  // coba ambil ulang beberapa kali (dengan jeda kecil) sebelum benar-benar menyerah.
-  for(let attempt=0; attempt<3; attempt++){
-    if(attempt>0) await new Promise(r=> setTimeout(r, 400*attempt));
+  // coba ambil ulang beberapa kali (dengan jeda makin panjang) sebelum benar-benar menyerah.
+  // Untuk file besar (banyak potongan), makin banyak potongan makin besar peluang minimal
+  // satu di antaranya butuh waktu lebih lama untuk "settle" — makanya dikasih lebih banyak
+  // kesempatan di sini.
+  for(let attempt=0; attempt<5; attempt++){
+    if(attempt>0) await new Promise(r=> setTimeout(r, 500*attempt));
     try{
       const res = await window.storage.get(chunkKey, shared);
       const val = (res && res.value) || '';
@@ -1371,6 +1374,13 @@ function hideToast(){
   const t = document.getElementById('toast');
   clearTimeout(t._h);
   t.classList.remove('show');
+  // PENTING: class 'saving' bikin animasi CSS (toastPulse) yang mengatur opacity sendiri —
+  // animasi itu MENANG dibanding opacity:0 dari class 'show' yang dilepas, jadi kalau 'saving'
+  // tidak ikut dilepas di sini, toast-nya keliatan tetap "hidup"/pulsing selamanya walau
+  // prosesnya sudah selesai. Ini sumber bug "menyiapkan file..." / "mengecek status..." yang
+  // tidak pernah hilang.
+  t.classList.remove('saving');
+  t.classList.remove('error');
 }
 async function downloadAttachmentSafely(cache, key, fetchFn, filename){
   filename = filename || 'file';
@@ -3446,7 +3456,7 @@ function attachHandlers(){
           docFileCache[docType] = val; // sekalian isi cache biar download berikutnya instan
           await customAlert(`✅ ${docLabel} sudah tersimpan lengkap dan siap dibagikan ke klien.`);
         }else{
-          await customAlert(`⚠️ ${docLabel} belum bisa diverifikasi (belum sempat "settle" di storage).\n\nTunggu sebentar lalu cek lagi. Kalau setelah beberapa menit masih begini, coba hapus dan upload ulang.`);
+          await customAlert(`⚠️ ${docLabel} belum bisa diverifikasi (belum sempat "settle" di storage).\n\nDetail teknis: ${lastFetchError || 'tidak ada detail'}\n\nTunggu sebentar lalu cek lagi. Kalau setelah beberapa menit masih begini, coba hapus dan upload ulang.`);
         }
       });
     });
@@ -3663,7 +3673,7 @@ function attachHandlers(){
         invoiceFileCache[id] = val; // sekalian isi cache biar download berikutnya instan
         await customAlert('✅ Invoice sudah tersimpan lengkap dan siap dibagikan ke klien.');
       }else{
-        await customAlert('⚠️ Invoice belum bisa diverifikasi (belum sempat "settle" di storage).\n\nTunggu sebentar lalu cek lagi. Kalau setelah beberapa menit masih begini, coba hapus dan upload ulang.');
+        await customAlert(`⚠️ Invoice belum bisa diverifikasi (belum sempat "settle" di storage).\n\nDetail teknis: ${lastFetchError || 'tidak ada detail'}\n\nTunggu sebentar lalu cek lagi. Kalau setelah beberapa menit masih begini, coba hapus dan upload ulang.`);
       }
     });
     const delBtn = el.querySelector('[data-action="delete-payment"]');
