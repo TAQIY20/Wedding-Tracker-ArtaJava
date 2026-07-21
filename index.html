@@ -1121,7 +1121,7 @@ async function storageSetWithRetry(key, value, shared, retries){
    Chunk-chunk ini dikirim BERBARENGAN (beberapa sekaligus, bukan satu-satu
    berurutan) supaya file besar tidak butuh waktu lama / terlihat seperti
    macet tanpa keterangan apa pun saat diunggah. */
-const STORAGE_CHUNK_SIZE = 20000;
+const STORAGE_CHUNK_SIZE = 42000;
 const STORAGE_CHUNK_CONCURRENCY = 3;
 async function runWithConcurrency(taskFns, limit, onProgress){
   const results = new Array(taskFns.length);
@@ -1183,12 +1183,10 @@ async function storageSetChunkedWithRetry(baseKey, value, shared, onProgress){
 let lastFetchError = '';
 async function fetchChunkWithIntegrityRetry(chunkKey, expectedLength, shared){
   // Beberapa kali percobaan: kalau chunk yang diambil ternyata panjangnya tidak cocok
-  // dengan yang tercatat di meta waktu upload, kemungkinan besar itu korup/kepotong —
-  // coba ambil ulang beberapa kali (dengan jeda makin panjang) sebelum benar-benar menyerah.
-  // Untuk file besar (banyak potongan), makin banyak potongan makin besar peluang minimal
-  // satu di antaranya butuh waktu lebih lama untuk "settle" — makanya dikasih lebih banyak
-  // kesempatan di sini.
-  for(let attempt=0; attempt<5; attempt++){
+  // dengan yang tercatat di meta waktu upload, kemungkinan besar itu korup/kepotong, atau
+  // sekadar glitch baca yang sesekali terjadi di storage — coba ambil ulang beberapa kali
+  // (dengan jeda makin panjang) sebelum benar-benar menyerah.
+  for(let attempt=0; attempt<7; attempt++){
     if(attempt>0) await new Promise(r=> setTimeout(r, 500*attempt));
     try{
       const res = await window.storage.get(chunkKey, shared);
@@ -1207,12 +1205,19 @@ async function storageGetChunkedOnce(baseKey, shared){
     if(metaRes && metaRes.value){
       const meta = JSON.parse(metaRes.value);
       let missingChunk = false;
-      const parts = await Promise.all(Array.from({length: meta.chunks}, (_,i)=>
+      // PENTING: batasi jumlah permintaan baca yang jalan BERBARENGAN (sama seperti waktu
+      // menulis) — sebelumnya semua chunk (bisa belasan-puluhan) ditembak sekaligus tanpa
+      // batas, beda dengan penulisan yang sudah dibatasi 3 sekaligus. Ketidaksimetrisan ini
+      // kemungkinan besar jadi penyebab kenapa PEMBACAAN lebih sering gagal/nyendat daripada
+      // PENULISAN — storage backend kemungkinan lebih rentan kalau dibanjiri banyak request
+      // baca sekaligus.
+      const readTasks = Array.from({length: meta.chunks}, (_,i)=> ()=>
         fetchChunkWithIntegrityRetry(baseKey + '_c' + i, meta.lengths ? meta.lengths[i] : null, shared).then(v=>{
           if(v===null) missingChunk = true;
           return v;
         })
-      ));
+      );
+      const parts = await runWithConcurrency(readTasks, STORAGE_CHUNK_CONCURRENCY);
       if(missingChunk){
         console.error('storageGetChunked: ada chunk yang gagal/korup untuk', baseKey, lastFetchError);
         return null; // jangan kembalikan data korup (chunk hilang/rusak diganti string kosong)
