@@ -3390,9 +3390,13 @@ function attachHandlers(){
         }
         // File-nya sekarang sebuah URL Blob (bukan data-URL chunked), jadi
         // download tinggal buka linknya langsung — tidak perlu gabung chunk lagi.
+        // target="_blank" PENTING: tanpa ini, klik akan memindahkan tab yang sedang
+        // dipakai user ke halaman file, jadi waktu klik "back" browser harus muat ulang
+        // seluruh halaman tracker dari nol (kelihatan seperti nge-refresh).
         const link = document.createElement('a');
         link.href = doc.url;
         link.download = doc.name;
+        link.target = '_blank';
         link.rel = 'noopener';
         document.body.appendChild(link);
         link.click();
@@ -3784,6 +3788,7 @@ function attachHandlers(){
         const link = document.createElement('a');
         link.href = p.invoice.url;
         link.download = downloadInvoiceLink.dataset.filename || p.invoice.name;
+        link.target = '_blank'; // buka di tab baru, biar halaman tracker tidak ikut ke-refresh waktu klik "back"
         link.rel = 'noopener';
         document.body.appendChild(link);
         link.click();
